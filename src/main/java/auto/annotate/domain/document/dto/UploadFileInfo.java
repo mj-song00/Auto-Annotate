@@ -1,4 +1,4 @@
-package auto.annotate.domain.file.dto;
+package auto.annotate.domain.document.dto;
 
 import lombok.Getter;
 
