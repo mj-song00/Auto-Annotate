@@ -12,7 +12,10 @@ public enum ExceptionEnum {
             "서버에서 문제가 발생하였습니다."),
 
 
-    FILE_NOT_FOUND(HttpStatus.BAD_REQUEST,"FILE_NOT_FOUND","첨부파일을 확인해 주세요");
+    DOCUMENT_NOT_FOUND(HttpStatus.BAD_REQUEST,"DOCUMENT_NOT_FOUND","첨부파일을 확인해 주세요"),
+    FILE_READ_ERROR(HttpStatus.BAD_REQUEST, "FILE_READ_ERROR", "pdf를 읽는 중 오류가 발생하였습니다"),
+    FILE_WRITE_ERROR(HttpStatus.BAD_REQUEST, "FILE_WRITE_ERROR","pdf를 수정하던중 오류가 발생하였습니다" );
+
 
     private final HttpStatus status;
     private final String errorCode;
