@@ -39,11 +39,16 @@ dependencies {
     testImplementation 'org.springframework.boot:spring-boot-starter-thymeleaf-test'
     testRuntimeOnly 'org.junit.platform:junit-platform-launcher'
 
-    //PDF
-    implementation group: 'org.apache.pdfbox', name: 'pdfbox', version: '2.0.31'
-
     //Swagger
     implementation("org.springdoc:springdoc-openapi-starter-webmvc-ui:2.8.14")
+
+    //Tabula - java
+    implementation("technology.tabula:tabula:1.0.5") {
+        exclude group: 'org.slf4j', module: 'slf4j-simple'
+    }
+
+    //PDF
+    implementation 'org.apache.pdfbox:pdfbox:2.0.30'
 }
 
 tasks.named('test') {
