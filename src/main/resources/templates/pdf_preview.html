@@ -1,0 +1,79 @@
+<!DOCTYPE html>
+<html xmlns:th="http://www.thymeleaf.org">
+<head>
+    <title>PDF 미리보기</title>
+
+    <!-- PDF.js 전체 라이브러리 -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/2.16.105/pdf.min.js"></script>
+
+</head>
+<body>
+<h1>PDF 미리보기</h1>
+
+<button onclick="openPdfModal(0)">조건 1</button>
+<button onclick="openPdfModal(1)">조건 2</button>
+<button onclick="openPdfModal(2)">조건 3</button>
+<button onclick="openPdfModal(3)">조건 4</button>
+
+<div id="pdfModal" style="display:none; position:fixed; top:10%; left:10%; width:80%; height:80%; background:#fff; border:1px solid #ccc; padding:10px; overflow:auto;">
+    <canvas id="pdfCanvas"></canvas>
+    <div style="margin-top:10px;">
+        <button onclick="downloadPdf()">다운로드</button>
+        <button onclick="closePdfModal()">닫기</button>
+    </div>
+</div>
+
+<script th:inline="javascript">
+    document.addEventListener("DOMContentLoaded", function() {
+        let currentButtonIndex = null;
+        let currentDocumentId = null;
+
+        // 서버에서 전달받은 documentIds 배열
+        let documentIds = /*[[${documentIds}]]*/ [];
+        console.log("documentIds:", documentIds);
+
+        window.openPdfModal = function(buttonIndex) {
+            if (!documentIds || documentIds.length === 0) {
+                console.error("documentIds가 없습니다!");
+                return;
+            }
+
+            currentButtonIndex = buttonIndex;
+            currentDocumentId = documentIds[buttonIndex]; // 클릭한 버튼에 해당하는 PDF
+            console.log("버튼 클릭:", buttonIndex, "documentId:", currentDocumentId);
+
+            document.getElementById('pdfModal').style.display = 'block';
+            const url = '/document/' + currentDocumentId + '/highlighted';
+            console.log("GET 요청 URL:", url);
+
+            console.log("pdfjsLib 정의 여부:", typeof pdfjsLib); // object여야 함
+            if (typeof pdfjsLib === "undefined") {
+                console.error("pdfjsLib가 정의되지 않았습니다!");
+                return;
+            }
+
+            const loadingTask = pdfjsLib.getDocument(url);
+            loadingTask.promise.then(pdf => {
+                pdf.getPage(1).then(page => {
+                    const viewport = page.getViewport({ scale: 1.5 });
+                    const canvas = document.getElementById('pdfCanvas');
+                    canvas.height = viewport.height;
+                    canvas.width = viewport.width;
+                    page.render({ canvasContext: canvas.getContext('2d'), viewport: viewport });
+                });
+            }).catch(err => console.error("PDF 로드 에러:", err));
+        }
+
+        window.downloadPdf = function() {
+            if (!currentDocumentId) return;
+            const url = '/pdf/' + currentDocumentId + '/download?button=' + currentButtonIndex;
+            window.location.href = url;
+        }
+
+        window.closePdfModal = function() {
+            document.getElementById('pdfModal').style.display = 'none';
+        }
+    });
+</script>
+</body>
+</html>
