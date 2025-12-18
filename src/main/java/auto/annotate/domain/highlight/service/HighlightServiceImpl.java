@@ -19,7 +19,7 @@ import java.util.stream.Collectors;
 public class HighlightServiceImpl implements HighlightService {
 
     @Override
-    public List<VisitSummaryRecord> applyHighlights(List<VisitSummaryRecord> records) {
+    public List<VisitSummaryRecord> applyHighlights(List<VisitSummaryRecord> records, int condition) {
 
         // 1️⃣ HighlightResult 생성 (내부 연산용)
         HighlightResult highlightResult = new HighlightResult(

@@ -17,6 +17,7 @@ import org.apache.pdfbox.pdmodel.graphics.color.PDColor;
 import org.apache.pdfbox.pdmodel.graphics.color.PDDeviceRGB;
 import org.apache.pdfbox.pdmodel.interactive.annotation.PDAnnotationTextMarkup;
 import org.apache.pdfbox.text.PDFTextStripper;
+import org.apache.pdfbox.text.TextPosition;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.core.io.Resource;
 import org.springframework.stereotype.Service;
@@ -94,26 +95,30 @@ public class DocumentServiceImpl implements DocumentService {
      * GET /document/{id}/highlighted: 사용자가 요청할 때 실시간으로 하이라이팅된 PDF를 생성하고 반환합니다.
      */
     @Override
-    public Resource loadHighlightedFileAsResource(UUID documentId) {
+    public Resource loadHighlightedFileAsResource(UUID documentId, int condition) {
 
+        log.info("시작");
         // 1. DB에서 Document 조회 및 원본 파일 경로 획득
         Document document = documentRepository.findById(documentId)
                 .orElseThrow(() -> new BaseException(ExceptionEnum.DOCUMENT_NOT_FOUND));
 
-        Path uploadPath = Paths.get(uploadDir).toAbsolutePath().normalize();
-        Path originalFilePath = uploadPath.resolve(document.getFileUrl()).normalize();
+        String storedFilename = document.getFileUrl();
+        Path originalFilePath = Paths.get(uploadDir, document.getFileUrl());
 
+        log.info("확인1");
         // 임시 하이라이팅 파일 경로 생성 (UUID를 사용하여 파일명 충돌 방지)
-        String tempHighlightedFileName = "temp-" + UUID.randomUUID() + "-" + document.getFileUrl().replace(".pdf", "-highlighted.pdf");
-        Path tempHighlightedFilePath = uploadPath.resolve(tempHighlightedFileName);
+        String tempHighlightedFileName = "temp-" + UUID.randomUUID() + "-" +
+                document.getFileUrl().replace(".pdf", "-highlighted.pdf");
+        Path tempHighlightedFilePath = Paths.get(uploadDir, tempHighlightedFileName);
 
         try {
             // A. PDF 파싱
             List<VisitSummaryRecord> parsedRecords = parsePdfToRecordsFromPdf(originalFilePath);
+            log.info("확인2");
+            // B. 조건별 하이라이트 적용
+            List<VisitSummaryRecord> highlightedRecords = highlightService.applyHighlights(parsedRecords, condition);
 
-            // B. 조건 검사
-            List<VisitSummaryRecord> highlightedRecords = highlightService.applyHighlights(parsedRecords);
-            // C. PDF 생성
+            // C. PDF 생성 (하이라이트 적용)
             generateHighlightedPdf(highlightedRecords, originalFilePath, tempHighlightedFilePath);
 
 
@@ -121,7 +126,6 @@ public class DocumentServiceImpl implements DocumentService {
             Resource resource = new UrlResource(tempHighlightedFilePath.toUri());
 
             if (resource.exists() && resource.isReadable()) {
-                // 임시 파일은 반환 후 삭제할 수 있도록 별도의 스케줄링 또는 후처리 로직 필요
                 log.info("Temporary highlighted PDF created and served: {}", tempHighlightedFilePath);
                 return resource;
             } else {
@@ -130,16 +134,11 @@ public class DocumentServiceImpl implements DocumentService {
         } catch (MalformedURLException e) {
             throw new BaseException(ExceptionEnum.FILE_READ_ERROR);
         } finally {
-            // *** 주의: 실제 운영 환경에서는 임시 파일 삭제를 비동기 또는 AOP로 처리해야 합니다. ***
-            // 현재는 간단한 구현을 위해 즉시 삭제 시도 (스트리밍 완료 후 삭제 보장 안 됨)
-            try {
-                // Files.deleteIfExists(tempHighlightedFilePath);
-                log.warn("Temporary file deletion skipped for demonstration. Implement proper file cleanup.");
-            } catch (Exception e) {
-                log.error("Failed to delete temporary file: {}", tempHighlightedFilePath, e);
-            }
+            // 임시 파일 삭제는 운영 환경에서는 별도 스케줄링 필요
+            log.warn("Temporary file deletion skipped for demonstration. Implement proper file cleanup.");
         }
     }
+
 
     private List<VisitSummaryRecord> parsePdfToRecordsFromPdf(Path pdfPath) {
         List<VisitSummaryRecord> records = new ArrayList<>();
@@ -179,6 +178,9 @@ public class DocumentServiceImpl implements DocumentService {
         }
     }
 
+    /**
+     * PDF 생성 + 조건별 하이라이트 적용
+     */
     private void generateHighlightedPdf(
             List<VisitSummaryRecord> records,
             Path originalPdf,
@@ -186,51 +188,123 @@ public class DocumentServiceImpl implements DocumentService {
     ) {
         try (PDDocument document = PDDocument.load(originalPdf.toFile())) {
 
-            // PDF 전체 텍스트 가져오기 (읽기 전용)
-            PDFTextStripper stripper = new PDFTextStripper();
-            stripper.setStartPage(1);
-            stripper.setEndPage(document.getNumberOfPages());
-            String fullText = stripper.getText(document);
+            for (int pageIndex = 0; pageIndex < document.getNumberOfPages(); pageIndex++) {
+                PDPage page = document.getPage(pageIndex);
+                float pageHeight = page.getMediaBox().getHeight(); // ⭐ 중요
 
-            // 페이지 단위로 하이라이트 적용
-            for (PDPage page : document.getPages()) {
+                for (VisitSummaryRecord record : records) {
+                    for (HighlightType type : record.getHighlightTypes()) {
 
-                // 페이지에 쓰기용 스트림 열기
-                try (PDPageContentStream contentStream = new PDPageContentStream(
-                        document, page, PDPageContentStream.AppendMode.APPEND, true)) {
+                        String targetText = switch (type) {
+                            case VISIT_OVER_7_DAYS -> record.getInstitutionName();
+                            case HAS_HOSPITALIZATION, HAS_SURGERY, MONTH_30_DRUG ->
+                                    record.getTreatmentDetail();
+                        };
 
-                    for (VisitSummaryRecord record : records) {
-                        for (HighlightType type : record.getHighlightTypes()) {
-                            // 단순 예시: 텍스트 매칭 시 하이라이트
-                            String targetText = switch (type) {
-                                case VISIT_OVER_7_DAYS -> record.getInstitutionName();
-                                case HAS_HOSPITALIZATION, HAS_SURGERY, MONTH_30_DRUG -> record.getTreatmentDetail();
-                            };
+                        if (targetText == null || targetText.isBlank()) continue;
 
-                            // 텍스트 위치 계산 없이 전체 페이지 영역에 하이라이트
-                            PDAnnotationTextMarkup highlight = new PDAnnotationTextMarkup(PDAnnotationTextMarkup.SUB_TYPE_HIGHLIGHT);
+                        List<PDRectangle> areas =
+                                calculateTextPositions(document, pageIndex, targetText);
+
+                        for (PDRectangle rect : areas) {
+
+                            // ⭐ 좌표계 변환 (핵심)
+                            float x1 = rect.getLowerLeftX();
+                            float y1 = pageHeight - rect.getUpperRightY();
+                            float x2 = rect.getUpperRightX();
+                            float y2 = pageHeight - rect.getLowerLeftY();
+
+                            PDAnnotationTextMarkup highlight =
+                                    new PDAnnotationTextMarkup(PDAnnotationTextMarkup.SUB_TYPE_HIGHLIGHT);
+
                             highlight.setConstantOpacity(0.3f);
-                            highlight.setColor(new PDColor(new float[]{1, 1, 0}, PDDeviceRGB.INSTANCE)); // 노란색
+                            highlight.setColor(type.getPDColor());
 
-                            PDRectangle rect = page.getMediaBox();
-                            highlight.setRectangle(rect);
+                            // ⭐ QuadPoints (UL → UR → LL → LR)
                             highlight.setQuadPoints(new float[]{
-                                    rect.getLowerLeftX(), rect.getUpperRightY(),
-                                    rect.getUpperRightX(), rect.getUpperRightY(),
-                                    rect.getLowerLeftX(), rect.getLowerLeftY(),
-                                    rect.getUpperRightX(), rect.getLowerLeftY()
+                                    x1, y2,
+                                    x2, y2,
+                                    x1, y1,
+                                    x2, y1
                             });
 
+                            // ⭐ Bounding box
+                            PDRectangle bbox = new PDRectangle();
+                            bbox.setLowerLeftX(x1);
+                            bbox.setLowerLeftY(y1);
+                            bbox.setUpperRightX(x2);
+                            bbox.setUpperRightY(y2);
+
+                            highlight.setRectangle(bbox);
                             page.getAnnotations().add(highlight);
                         }
                     }
-                } // contentStream 자동 close
+                }
             }
 
             document.save(outputPdf.toFile());
-
         } catch (IOException e) {
-            throw new BaseException(ExceptionEnum.FILE_WRITE_ERROR);
+            throw new RuntimeException("PDF 하이라이트 생성 실패", e);
         }
+    }
+
+    /**
+     * 실제 텍스트 위치 계산
+     * PDDocument, PDPage, 하이라이트할 텍스트를 받아 PDRectangle 리스트 반환
+     */
+    private List<PDRectangle> calculateTextPositions(
+            PDDocument document,
+            int pageIndex,
+            String targetText
+    ) throws IOException {
+
+        List<TextPosition> allPositions = new ArrayList<>();
+        StringBuilder fullText = new StringBuilder();
+
+        PDFTextStripper stripper = new PDFTextStripper() {
+            @Override
+            protected void writeString(String text, List<TextPosition> textPositions) {
+                for (TextPosition pos : textPositions) {
+                    fullText.append(pos.getUnicode());
+                    allPositions.add(pos);
+                }
+            }
+        };
+
+        stripper.setStartPage(pageIndex + 1);
+        stripper.setEndPage(pageIndex + 1);
+        stripper.getText(document);
+
+        String pageText = fullText.toString().replaceAll("\\s+", "");
+        String normalizedTarget = targetText.replaceAll("\\s+", "");
+
+        List<PDRectangle> rectangles = new ArrayList<>();
+
+        int index = pageText.indexOf(normalizedTarget);
+        while (index >= 0) {
+            int start = index;
+            int end = index + normalizedTarget.length() - 1;
+
+            TextPosition startPos = allPositions.get(start);
+            TextPosition endPos = allPositions.get(end);
+
+            float x1 = startPos.getXDirAdj();
+            float x2 = endPos.getXDirAdj() + endPos.getWidthDirAdj();
+
+            float yTop = startPos.getYDirAdj();
+            float height = startPos.getHeightDir();
+
+            // ⭐ 여기서는 "텍스트 기준 좌표" 그대로 반환
+            rectangles.add(new PDRectangle(
+                    x1,
+                    yTop - height,
+                    x2 - x1,
+                    height
+            ));
+
+            index = pageText.indexOf(normalizedTarget, index + 1);
+        }
+
+        return rectangles;
     }
 }

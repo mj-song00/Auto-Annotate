@@ -9,6 +9,7 @@ import auto.annotate.domain.document.repository.DocumentRepository;
 import auto.annotate.domain.document.service.DocumentService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.core.io.FileSystemResource;
 import org.springframework.core.io.Resource;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpStatus;
@@ -18,6 +19,7 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 import org.springframework.web.multipart.MultipartFile;
 
+import java.nio.file.Files;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -49,9 +51,16 @@ public class DocumentController {
     }
 
 
-    @GetMapping("/{documentId}/highlihted")
-    public ResponseEntity<Resource> getHighlightedDocument(@PathVariable UUID documentId){
-        Resource resource = documentService.loadHighlightedFileAsResource(documentId);
+    @GetMapping("/{documentId}/highlighted")
+    public ResponseEntity<Resource> getHighlightedDocument(
+            @PathVariable UUID documentId,
+            @RequestParam(name = "condition", required = false)  Integer condition){
+
+        int cond = (condition == null) ? 0 : condition;
+
+        log.info("🔥 highlighted 요청 documentId={}, condition={}", documentId, cond);
+
+        Resource resource = documentService.loadHighlightedFileAsResource(documentId, condition);
 
         String contentType = "application/pdf";
         String headerValue = "inline; filename=\"" + resource.getFilename() + "\"";
@@ -73,6 +82,7 @@ public class DocumentController {
                 .map(doc -> {
                     Map<String, Object> map = new HashMap<>();
                     map.put("id", doc.getId());
+                    map.put("filePath", doc.getFileUrl());
                     map.put("originalFileName", doc.getOriginalFileName());
                     return map;
                 })

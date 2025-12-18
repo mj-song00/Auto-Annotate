@@ -10,5 +10,5 @@ import java.util.UUID;
 public interface DocumentService {
    List<Document> save(List<MultipartFile> multipartFile);
 
-   Resource loadHighlightedFileAsResource(UUID documentId);
+   Resource loadHighlightedFileAsResource(UUID documentId, int condition);
 }

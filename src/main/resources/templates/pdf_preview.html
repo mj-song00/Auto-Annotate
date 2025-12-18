@@ -18,6 +18,11 @@
 <div id="pdfModal" style="display:none; position:fixed; top:10%; left:10%; width:80%; height:80%; background:#fff; border:1px solid #ccc; padding:10px; overflow:auto;">
     <canvas id="pdfCanvas"></canvas>
     <div style="margin-top:10px;">
+        <button id="prevPage">◀ 이전</button>
+        <button id="nextPage">다음 ▶</button>
+        <span>페이지: <span id="pageNum"></span> / <span id="pageCount"></span></span>
+    </div>
+    <div style="margin-top:10px;">
         <button onclick="downloadPdf()">다운로드</button>
         <button onclick="closePdfModal()">닫기</button>
     </div>
@@ -27,42 +32,79 @@
     document.addEventListener("DOMContentLoaded", function() {
         let currentButtonIndex = null;
         let currentDocumentId = null;
+        let pdfDoc = null;
+        let pageNum = 1;
+        let pageRendering = false;
+        let pageNumPending = null;
+        const scale = 1.5;
+        const canvas = document.getElementById('pdfCanvas');
+        const ctx = canvas.getContext('2d');
 
-        // 서버에서 전달받은 documentIds 배열
         let documentIds = /*[[${documentIds}]]*/ [];
-        console.log("documentIds:", documentIds);
+        console.log(documentIds)
 
         window.openPdfModal = function(buttonIndex) {
-            if (!documentIds || documentIds.length === 0) {
-                console.error("documentIds가 없습니다!");
-                return;
-            }
+            if (!documentIds || documentIds.length === 0) return;
+            if (!documentIds[buttonIndex]) return;
 
             currentButtonIndex = buttonIndex;
-            currentDocumentId = documentIds[buttonIndex]; // 클릭한 버튼에 해당하는 PDF
-            console.log("버튼 클릭:", buttonIndex, "documentId:", currentDocumentId);
-
+            currentDocumentId = documentIds[buttonIndex];
+            pageNum = 1;
+            console.log(`요청 아이디 : ${currentDocumentId }`)
             document.getElementById('pdfModal').style.display = 'block';
-            const url = '/document/' + currentDocumentId + '/highlighted';
-            console.log("GET 요청 URL:", url);
 
-            console.log("pdfjsLib 정의 여부:", typeof pdfjsLib); // object여야 함
-            if (typeof pdfjsLib === "undefined") {
-                console.error("pdfjsLib가 정의되지 않았습니다!");
-                return;
-            }
+            const url = '/document/' + currentDocumentId + '/highlighted?condition=' + currentButtonIndex;
 
-            const loadingTask = pdfjsLib.getDocument(url);
-            loadingTask.promise.then(pdf => {
-                pdf.getPage(1).then(page => {
-                    const viewport = page.getViewport({ scale: 1.5 });
-                    const canvas = document.getElementById('pdfCanvas');
-                    canvas.height = viewport.height;
-                    canvas.width = viewport.width;
-                    page.render({ canvasContext: canvas.getContext('2d'), viewport: viewport });
-                });
-            }).catch(err => console.error("PDF 로드 에러:", err));
+            console.log("요청 URL:", url); // ✅ 디버그용
+
+            pdfjsLib.getDocument(url).promise.then(pdf => {
+                pdfDoc = pdf;
+                document.getElementById('pageCount').textContent = pdfDoc.numPages;
+                renderPage(pageNum);
+            });
         }
+
+
+        function renderPage(num) {
+            pageRendering = true;
+            pdfDoc.getPage(num).then(page => {
+                const viewport = page.getViewport({ scale: scale });
+                canvas.height = viewport.height;
+                canvas.width = viewport.width;
+
+                const renderContext = { canvasContext: ctx, viewport: viewport };
+                const renderTask = page.render(renderContext);
+
+                renderTask.promise.then(() => {
+                    pageRendering = false;
+                    document.getElementById('pageNum').textContent = num;
+                    if (pageNumPending !== null) {
+                        renderPage(pageNumPending);
+                        pageNumPending = null;
+                    }
+                });
+            });
+        }
+
+        function queueRenderPage(num) {
+            if (pageRendering) {
+                pageNumPending = num;
+            } else {
+                renderPage(num);
+            }
+        }
+
+        document.getElementById('prevPage').addEventListener('click', () => {
+            if (pageNum <= 1) return;
+            pageNum--;
+            queueRenderPage(pageNum);
+        });
+
+        document.getElementById('nextPage').addEventListener('click', () => {
+            if (pageNum >= pdfDoc.numPages) return;
+            pageNum++;
+            queueRenderPage(pageNum);
+        });
 
         window.downloadPdf = function() {
             if (!currentDocumentId) return;

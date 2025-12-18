@@ -25,6 +25,7 @@ public class VisitSummaryRecord {
     private final String insuranceBenefit;
     private final String userPaidAmount;
     private final String treatmentDetail;
+    private final int pageNumber;
 
     // 3. @Builder.Default 사용: Set 필드의 기본값 초기화 및 불변성 확보
     @Builder.Default
