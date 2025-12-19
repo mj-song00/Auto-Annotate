@@ -54,24 +54,20 @@ public class DocumentController {
     @GetMapping("/{documentId}/highlighted")
     public ResponseEntity<Resource> getHighlightedDocument(
             @PathVariable UUID documentId,
-            @RequestParam(name = "condition", required = false)  Integer condition){
-
-        int cond = (condition == null) ? 0 : condition;
-
-        log.info("🔥 highlighted 요청 documentId={}, condition={}", documentId, cond);
+            @RequestParam(name = "condition", defaultValue = "0") int condition
+    ) {
+        log.info("🔥 highlighted 요청 documentId={}, condition={}", documentId, condition);
 
         Resource resource = documentService.loadHighlightedFileAsResource(documentId, condition);
 
-        String contentType = "application/pdf";
-        String headerValue = "inline; filename=\"" + resource.getFilename() + "\"";
-
         if (!resource.exists()) {
-            throw new RuntimeException("PDF 파일이 존재하지 않습니다: " + documentId);
+            throw new BaseException(ExceptionEnum.DOCUMENT_NOT_FOUND);
         }
 
         return ResponseEntity.ok()
-                .contentType(MediaType.parseMediaType(contentType))
-                .header(HttpHeaders.CONTENT_DISPOSITION, headerValue)
+                .contentType(MediaType.APPLICATION_PDF)
+                .header(HttpHeaders.CONTENT_DISPOSITION,
+                        "inline; filename=\"" + resource.getFilename() + "\"")
                 .body(resource);
     }
 

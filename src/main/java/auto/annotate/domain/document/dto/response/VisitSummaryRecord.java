@@ -47,7 +47,7 @@ public class VisitSummaryRecord {
                 .insuranceBenefit(this.insuranceBenefit)
                 .userPaidAmount(this.userPaidAmount)
                 .treatmentDetail(this.treatmentDetail)
-                // 변경된 필드
+                .pageNumber(this.pageNumber)
                 .highlightTypes(safeNewTypes)
                 .build();
     }

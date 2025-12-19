@@ -3,17 +3,22 @@
 <head>
     <title>PDF 미리보기</title>
 
-    <!-- PDF.js 전체 라이브러리 -->
+    <!-- PDF.js -->
     <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/2.16.105/pdf.min.js"></script>
-
+    <script>
+        // ✅ workerSrc 지정 (중요)
+        pdfjsLib.GlobalWorkerOptions.workerSrc =
+            "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/2.16.105/pdf.worker.min.js";
+    </script>
 </head>
 <body>
 <h1>PDF 미리보기</h1>
 
-<button onclick="openPdfModal(0)">조건 1</button>
-<button onclick="openPdfModal(1)">조건 2</button>
-<button onclick="openPdfModal(2)">조건 3</button>
-<button onclick="openPdfModal(3)">조건 4</button>
+<!-- ✅ 버튼은 "조건번호(1~4)"를 넘긴다 -->
+<button onclick="openPdfModal(1)">조건 1</button>
+<button onclick="openPdfModal(2)">조건 2</button>
+<button onclick="openPdfModal(3)">조건 3</button>
+<button onclick="openPdfModal(4)">조건 4</button>
 
 <div id="pdfModal" style="display:none; position:fixed; top:10%; left:10%; width:80%; height:80%; background:#fff; border:1px solid #ccc; padding:10px; overflow:auto;">
     <canvas id="pdfCanvas"></canvas>
@@ -30,42 +35,76 @@
 
 <script th:inline="javascript">
     document.addEventListener("DOMContentLoaded", function() {
-        let currentButtonIndex = null;
+        let currentConditionNo = null;   // ✅ 1~4
         let currentDocumentId = null;
         let pdfDoc = null;
         let pageNum = 1;
         let pageRendering = false;
         let pageNumPending = null;
+
         const scale = 1.5;
         const canvas = document.getElementById('pdfCanvas');
         const ctx = canvas.getContext('2d');
 
         let documentIds = /*[[${documentIds}]]*/ [];
-        console.log(documentIds)
+        console.log("documentIds:", documentIds);
 
-        window.openPdfModal = function(buttonIndex) {
-            if (!documentIds || documentIds.length === 0) return;
-            if (!documentIds[buttonIndex]) return;
-
-            currentButtonIndex = buttonIndex;
-            currentDocumentId = documentIds[buttonIndex];
+        function resetViewerState() {
+            // ✅ 이전 화면 지우기
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+            document.getElementById('pageNum').textContent = "";
+            document.getElementById('pageCount').textContent = "";
             pageNum = 1;
-            console.log(`요청 아이디 : ${currentDocumentId }`)
-            document.getElementById('pdfModal').style.display = 'block';
+            pageRendering = false;
+            pageNumPending = null;
 
-            const url = '/document/' + currentDocumentId + '/highlighted?condition=' + currentButtonIndex;
-
-            console.log("요청 URL:", url); // ✅ 디버그용
-
-            pdfjsLib.getDocument(url).promise.then(pdf => {
-                pdfDoc = pdf;
-                document.getElementById('pageCount').textContent = pdfDoc.numPages;
-                renderPage(pageNum);
-            });
+            // ✅ 이전 pdfDoc 해제
+            if (pdfDoc && typeof pdfDoc.destroy === "function") {
+                pdfDoc.destroy();
+            }
+            pdfDoc = null;
         }
 
+        window.openPdfModal = function(conditionNo) {
+            if (!documentIds || documentIds.length === 0) return;
+
+            // ✅ conditionNo(1~4) -> 배열 인덱스(0~3)
+            const idx = conditionNo - 1;
+            if (idx < 0 || idx >= documentIds.length) {
+                console.error("잘못된 conditionNo:", conditionNo, "documentIds.length:", documentIds.length);
+                return;
+            }
+
+            currentConditionNo = conditionNo;
+            currentDocumentId = documentIds[idx];
+
+            if (!currentDocumentId) {
+                console.error("documentId가 비어있음. idx:", idx, "documentIds:", documentIds);
+                return;
+            }
+
+            resetViewerState();
+            document.getElementById('pdfModal').style.display = 'block';
+
+            // ✅ 백엔드가 기대하는 condition = 1~4 로 보냄
+            const url = `/document/${currentDocumentId}/highlighted?condition=${currentConditionNo}`;
+            console.log("요청 아이디:", currentDocumentId);
+            console.log("요청 URL:", url);
+
+            pdfjsLib.getDocument(url).promise
+                .then(pdf => {
+                    pdfDoc = pdf;
+                    document.getElementById('pageCount').textContent = pdfDoc.numPages;
+                    renderPage(pageNum);
+                })
+                .catch(err => {
+                    console.error("PDF 로드 실패:", err);
+                });
+        }
 
         function renderPage(num) {
+            if (!pdfDoc) return;
+
             pageRendering = true;
             pdfDoc.getPage(num).then(page => {
                 const viewport = page.getViewport({ scale: scale });
@@ -78,11 +117,16 @@
                 renderTask.promise.then(() => {
                     pageRendering = false;
                     document.getElementById('pageNum').textContent = num;
+
                     if (pageNumPending !== null) {
-                        renderPage(pageNumPending);
+                        const next = pageNumPending;
                         pageNumPending = null;
+                        renderPage(next);
                     }
                 });
+            }).catch(err => {
+                pageRendering = false;
+                console.error("페이지 렌더링 실패:", err);
             });
         }
 
@@ -95,25 +139,29 @@
         }
 
         document.getElementById('prevPage').addEventListener('click', () => {
+            if (!pdfDoc) return;
             if (pageNum <= 1) return;
             pageNum--;
             queueRenderPage(pageNum);
         });
 
         document.getElementById('nextPage').addEventListener('click', () => {
+            if (!pdfDoc) return;
             if (pageNum >= pdfDoc.numPages) return;
             pageNum++;
             queueRenderPage(pageNum);
         });
 
         window.downloadPdf = function() {
-            if (!currentDocumentId) return;
-            const url = '/pdf/' + currentDocumentId + '/download?button=' + currentButtonIndex;
+            if (!currentDocumentId || !currentConditionNo) return;
+            // ✅ buttonIndex 대신 conditionNo를 보냄 (다운로드도 일관성)
+            const url = `/pdf/${currentDocumentId}/download?condition=${currentConditionNo}`;
             window.location.href = url;
         }
 
         window.closePdfModal = function() {
             document.getElementById('pdfModal').style.display = 'none';
+            resetViewerState();
         }
     });
 </script>

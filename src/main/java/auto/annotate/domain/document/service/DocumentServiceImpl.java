@@ -29,9 +29,7 @@ import java.net.MalformedURLException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
-import java.util.ArrayList;
-import java.util.List;
-import java.util.UUID;
+import java.util.*;
 
 @Service
 @Slf4j
@@ -112,35 +110,42 @@ public class DocumentServiceImpl implements DocumentService {
         Path tempHighlightedFilePath = Paths.get(uploadDir, tempHighlightedFileName);
 
         try {
-            // A. PDF 파싱
+            // PDF 파싱
             List<VisitSummaryRecord> parsedRecords = parsePdfToRecordsFromPdf(originalFilePath);
             log.info("확인2");
-            // B. 조건별 하이라이트 적용
-            List<VisitSummaryRecord> highlightedRecords = highlightService.applyHighlights(parsedRecords, condition);
+            try {
+                List<VisitSummaryRecord> highlightedRecords =
+                        highlightService.applyHighlights(parsedRecords, condition);
+                log.info("확인3 - applyHighlights 끝, size={}", highlightedRecords.size());
 
-            // C. PDF 생성 (하이라이트 적용)
-            generateHighlightedPdf(highlightedRecords, originalFilePath, tempHighlightedFilePath);
+                generateHighlightedPdf(highlightedRecords, originalFilePath, tempHighlightedFilePath);
+                log.info("확인4 - generateHighlightedPdf 끝, output={}", tempHighlightedFilePath);
 
+                // 2. 생성된 임시 파일을 Resource로 로드
+                Resource resource = new UrlResource(tempHighlightedFilePath.toUri());
 
-            // 2. 생성된 임시 파일을 Resource로 로드
-            Resource resource = new UrlResource(tempHighlightedFilePath.toUri());
-
-            if (resource.exists() && resource.isReadable()) {
-                log.info("Temporary highlighted PDF created and served: {}", tempHighlightedFilePath);
-                return resource;
-            } else {
+                if (resource.exists() && resource.isReadable()) {
+                    log.info("Temporary highlighted PDF created and served: {}", tempHighlightedFilePath);
+                    return resource;
+                } else {
+                    throw new BaseException(ExceptionEnum.FILE_READ_ERROR);
+                }
+            } catch (MalformedURLException e) {
                 throw new BaseException(ExceptionEnum.FILE_READ_ERROR);
+            } finally {
+                // 임시 파일 삭제는 운영 환경에서는 별도 스케줄링 필요
+                log.warn("Temporary file deletion skipped for demonstration. Implement proper file cleanup.");
             }
-        } catch (MalformedURLException e) {
-            throw new BaseException(ExceptionEnum.FILE_READ_ERROR);
-        } finally {
-            // 임시 파일 삭제는 운영 환경에서는 별도 스케줄링 필요
-            log.warn("Temporary file deletion skipped for demonstration. Implement proper file cleanup.");
+        } catch (Exception e) {
+            log.error("🔥 condition={} 처리 중 예외", condition, e);
+            throw e;
         }
+
     }
 
 
     private List<VisitSummaryRecord> parsePdfToRecordsFromPdf(Path pdfPath) {
+        log.info("확인3");
         List<VisitSummaryRecord> records = new ArrayList<>();
         try (PDDocument document = PDDocument.load(pdfPath.toFile())) {
             PDFTextStripper stripper = new PDFTextStripper();
@@ -186,29 +191,93 @@ public class DocumentServiceImpl implements DocumentService {
             Path originalPdf,
             Path outputPdf
     ) {
+        long t0 = System.currentTimeMillis();
+        log.info("확인4-START generateHighlightedPdf: records={}, pdf={}",
+                records == null ? 0 : records.size(), originalPdf.getFileName());
+
+        // ✅ records 없으면 원본 그대로 저장
+        if (records == null || records.isEmpty()) {
+            try (PDDocument document = PDDocument.load(originalPdf.toFile())) {
+                document.save(outputPdf.toFile());
+            } catch (IOException e) {
+                throw new RuntimeException("PDF 저장 실패(대상 없음)", e);
+            }
+            log.info("확인4-END generateHighlightedPdf: empty records, elapsedMs={}", System.currentTimeMillis() - t0);
+            return;
+        }
+
         try (PDDocument document = PDDocument.load(originalPdf.toFile())) {
 
-            for (int pageIndex = 0; pageIndex < document.getNumberOfPages(); pageIndex++) {
+            // ✅ 1) pageNumber 기준으로 레코드 그룹핑 (해당 페이지에만 작업)
+            Map<Integer, List<VisitSummaryRecord>> byPage = new HashMap<>();
+
+            for (VisitSummaryRecord r : records) {
+                Integer raw = r.getPageNumber();
+                if (raw == null) continue;
+
+                // ⚠️ pageNumber가 1-based면 아래 한 줄로 바꿔:
+                // int pageIndex = raw - 1;
+                int pageIndex = raw;
+
+                if (pageIndex < 0 || pageIndex >= document.getNumberOfPages()) {
+                    log.warn("record pageNumber out of range. pageIndex={}, pages={}, record={}",
+                            pageIndex, document.getNumberOfPages(), r);
+                    continue;
+                }
+                byPage.computeIfAbsent(pageIndex, k -> new ArrayList<>()).add(r);
+            }
+
+            int highlightCount = 0;
+
+            // ✅ 2) 실제 레코드가 있는 페이지만 순회
+            for (Map.Entry<Integer, List<VisitSummaryRecord>> entry : byPage.entrySet()) {
+                int pageIndex = entry.getKey();
                 PDPage page = document.getPage(pageIndex);
-                float pageHeight = page.getMediaBox().getHeight(); // ⭐ 중요
+                float pageHeight = page.getMediaBox().getHeight();
 
-                for (VisitSummaryRecord record : records) {
-                    for (HighlightType type : record.getHighlightTypes()) {
+                // ✅ 3) 같은 페이지에서 같은 텍스트는 한 번만 위치 계산
+                // (람다 없이 if로 캐시 → effectively final 문제 없음)
+                Map<String, List<PDRectangle>> areasCache = new HashMap<>();
 
-                        String targetText = switch (type) {
+                List<VisitSummaryRecord> pageRecords = entry.getValue();
+
+                for (VisitSummaryRecord record : pageRecords) {
+                    Set<HighlightType> types = record.getHighlightTypes();
+                    if (types == null || types.isEmpty()) continue;
+
+                    for (HighlightType type : types) {
+
+                        String rawTarget = switch (type) {
                             case VISIT_OVER_7_DAYS -> record.getInstitutionName();
-                            case HAS_HOSPITALIZATION, HAS_SURGERY, MONTH_30_DRUG ->
-                                    record.getTreatmentDetail();
+                            case HAS_HOSPITALIZATION, HAS_SURGERY, MONTH_30_DRUG -> record.getTreatmentDetail();
                         };
 
-                        if (targetText == null || targetText.isBlank()) continue;
+                        if (rawTarget == null) continue;
 
-                        List<PDRectangle> areas =
-                                calculateTextPositions(document, pageIndex, targetText);
+                        String targetText = rawTarget.trim();
+                        if (targetText.isBlank()) continue;
+
+                        // ✅ 캐시키는 정규화 기준으로 (공백 제거한 형태)
+                        String normalizedTarget = targetText.replaceAll("\\s+", "");
+                        if (normalizedTarget.isBlank()) continue;
+
+                        String cacheKey = type.name() + "|" + normalizedTarget;
+
+                        List<PDRectangle> areas = areasCache.get(cacheKey);
+                        if (areas == null) {
+                            try {
+                                // calculateTextPositions 내부가 start/end page를 설정하므로 1페이지 처리만 수행
+                                areas = calculateTextPositions(document, pageIndex, targetText);
+                            } catch (IOException e) {
+                                throw new RuntimeException("텍스트 위치 계산 실패: pageIndex=" + pageIndex + ", text=" + targetText, e);
+                            }
+                            areasCache.put(cacheKey, areas);
+                        }
+
+                        if (areas == null || areas.isEmpty()) continue;
 
                         for (PDRectangle rect : areas) {
-
-                            // ⭐ 좌표계 변환 (핵심)
+                            // ✅ rect는 "텍스트 좌표계" 기준(YDirAdj)이라서 페이지 좌표계로 변환 필요
                             float x1 = rect.getLowerLeftX();
                             float y1 = pageHeight - rect.getUpperRightY();
                             float x2 = rect.getUpperRightX();
@@ -220,7 +289,7 @@ public class DocumentServiceImpl implements DocumentService {
                             highlight.setConstantOpacity(0.3f);
                             highlight.setColor(type.getPDColor());
 
-                            // ⭐ QuadPoints (UL → UR → LL → LR)
+                            // QuadPoints (UL → UR → LL → LR)
                             highlight.setQuadPoints(new float[]{
                                     x1, y2,
                                     x2, y2,
@@ -228,7 +297,6 @@ public class DocumentServiceImpl implements DocumentService {
                                     x2, y1
                             });
 
-                            // ⭐ Bounding box
                             PDRectangle bbox = new PDRectangle();
                             bbox.setLowerLeftX(x1);
                             bbox.setLowerLeftY(y1);
@@ -237,20 +305,25 @@ public class DocumentServiceImpl implements DocumentService {
 
                             highlight.setRectangle(bbox);
                             page.getAnnotations().add(highlight);
+                            highlightCount++;
                         }
                     }
                 }
             }
 
             document.save(outputPdf.toFile());
+            log.info("확인4-END generateHighlightedPdf: highlights={}, elapsedMs={}",
+                    highlightCount, System.currentTimeMillis() - t0);
+
         } catch (IOException e) {
             throw new RuntimeException("PDF 하이라이트 생성 실패", e);
         }
     }
 
+
     /**
      * 실제 텍스트 위치 계산
-     * PDDocument, PDPage, 하이라이트할 텍스트를 받아 PDRectangle 리스트 반환
+     * PDDocument, pageIndex, 하이라이트할 텍스트를 받아 PDRectangle 리스트 반환
      */
     private List<PDRectangle> calculateTextPositions(
             PDDocument document,
@@ -258,24 +331,31 @@ public class DocumentServiceImpl implements DocumentService {
             String targetText
     ) throws IOException {
 
-        List<TextPosition> allPositions = new ArrayList<>();
-        StringBuilder fullText = new StringBuilder();
+        List<TextPosition> positionsNoSpace = new ArrayList<>();
+        StringBuilder normalizedPageText = new StringBuilder();
 
         PDFTextStripper stripper = new PDFTextStripper() {
             @Override
             protected void writeString(String text, List<TextPosition> textPositions) {
                 for (TextPosition pos : textPositions) {
-                    fullText.append(pos.getUnicode());
-                    allPositions.add(pos);
+                    String ch = pos.getUnicode();
+                    if (ch == null) continue;
+
+                    // 공백/개행/탭 제거 (pageText와 positions 인덱스를 동일 기준으로 맞춤)
+                    if (ch.isBlank()) continue;
+
+                    normalizedPageText.append(ch);
+                    positionsNoSpace.add(pos);
                 }
             }
         };
 
+        // ✅ 해당 페이지만 처리
         stripper.setStartPage(pageIndex + 1);
         stripper.setEndPage(pageIndex + 1);
         stripper.getText(document);
 
-        String pageText = fullText.toString().replaceAll("\\s+", "");
+        String pageText = normalizedPageText.toString();
         String normalizedTarget = targetText.replaceAll("\\s+", "");
 
         List<PDRectangle> rectangles = new ArrayList<>();
@@ -285,8 +365,12 @@ public class DocumentServiceImpl implements DocumentService {
             int start = index;
             int end = index + normalizedTarget.length() - 1;
 
-            TextPosition startPos = allPositions.get(start);
-            TextPosition endPos = allPositions.get(end);
+            if (start < 0 || end >= positionsNoSpace.size()) {
+                break;
+            }
+
+            TextPosition startPos = positionsNoSpace.get(start);
+            TextPosition endPos = positionsNoSpace.get(end);
 
             float x1 = startPos.getXDirAdj();
             float x2 = endPos.getXDirAdj() + endPos.getWidthDirAdj();
@@ -294,7 +378,7 @@ public class DocumentServiceImpl implements DocumentService {
             float yTop = startPos.getYDirAdj();
             float height = startPos.getHeightDir();
 
-            // ⭐ 여기서는 "텍스트 기준 좌표" 그대로 반환
+            // ✅ "텍스트 좌표계" 그대로 반환
             rectangles.add(new PDRectangle(
                     x1,
                     yTop - height,
