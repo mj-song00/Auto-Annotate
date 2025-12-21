@@ -6,23 +6,23 @@ import auto.annotate.domain.document.dto.HighlightType;
 import auto.annotate.domain.document.dto.response.VisitSummaryRecord;
 import auto.annotate.domain.document.entity.Document;
 import auto.annotate.domain.document.repository.DocumentRepository;
+import auto.annotate.domain.highlight.overlay.HighlightMark;
+import auto.annotate.domain.highlight.overlay.HighlightMarkCollector;
+import auto.annotate.domain.highlight.overlay.PdfOverlayRenderer;
 import auto.annotate.domain.highlight.service.HighlightService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.pdfbox.pdmodel.PDDocument;
 import org.apache.pdfbox.pdmodel.PDPage;
-import org.apache.pdfbox.pdmodel.PDPageContentStream;
 import org.apache.pdfbox.pdmodel.common.PDRectangle;
-import org.apache.pdfbox.pdmodel.graphics.color.PDColor;
-import org.apache.pdfbox.pdmodel.graphics.color.PDDeviceRGB;
 import org.apache.pdfbox.pdmodel.interactive.annotation.PDAnnotationTextMarkup;
 import org.apache.pdfbox.text.PDFTextStripper;
 import org.apache.pdfbox.text.TextPosition;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.core.io.Resource;
+import org.springframework.core.io.UrlResource;
 import org.springframework.stereotype.Service;
 import org.springframework.web.multipart.MultipartFile;
-import org.springframework.core.io.UrlResource;
 
 import java.io.IOException;
 import java.net.MalformedURLException;
@@ -37,7 +37,6 @@ import java.util.*;
 public class DocumentServiceImpl implements DocumentService {
     private final DocumentRepository documentRepository;
     private final HighlightService highlightService;
-
 
     @Value("${pdf.file.upload-dir}")
     private String uploadDir;
@@ -310,6 +309,20 @@ public class DocumentServiceImpl implements DocumentService {
                     }
                 }
             }
+            // 1) 조건 계산 + 텍스트 위치 찾아서 marks 수집
+            HighlightMarkCollector highlightMarkCollector = new HighlightMarkCollector();
+            Map<HighlightType, List<String>> keywordsByType = new EnumMap<>(HighlightType.class);
+
+            keywordsByType.put(HighlightType.HAS_HOSPITALIZATION, List.of("입원"));
+            keywordsByType.put(HighlightType.HAS_SURGERY, List.of("수술"));
+            keywordsByType.put(HighlightType.MONTH_30_DRUG, List.of("30일", "30일 초과", "30"));
+            keywordsByType.put(HighlightType.VISIT_OVER_7_DAYS, List.of("7일", "7일 이상", "7"));
+
+            List<HighlightMark> marks = highlightMarkCollector.collectByKeywords(document, keywordsByType);
+
+            // 2) 오버레이 그리기 (요약박스/탭/마진바)
+            PdfOverlayRenderer renderer = new PdfOverlayRenderer();
+            renderer.render(document, marks);
 
             document.save(outputPdf.toFile());
             log.info("확인4-END generateHighlightedPdf: highlights={}, elapsedMs={}",
