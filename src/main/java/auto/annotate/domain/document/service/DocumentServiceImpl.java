@@ -43,7 +43,7 @@ public class DocumentServiceImpl implements DocumentService {
 
     @Override
     public List<Document> save(List<MultipartFile> multipartFiles) {
-
+        String bundleKey = java.util.UUID.randomUUID().toString();
         List<Document> savedDocuments = new ArrayList<>();
         // 1. 파일 시스템 저장 경로 준비 및 고유 식별자 (ID) 결정
         Path uploadPath = Paths.get(uploadDir).toAbsolutePath().normalize();
@@ -55,6 +55,7 @@ public class DocumentServiceImpl implements DocumentService {
                 throw new RuntimeException("Could not create upload directory!", e);
             }
         }
+
 
         for (MultipartFile multipartFile : multipartFiles) {
             // 파일이 비어있는 경우(null이거나 크기가 0) 건너뜁니다.
@@ -78,7 +79,8 @@ public class DocumentServiceImpl implements DocumentService {
 
             Document document = new Document(
                     originalFilename,
-                    storedFilename
+                    storedFilename,
+                    bundleKey
             );
 
             Document savedDocument = documentRepository.save(document);
@@ -194,7 +196,6 @@ public class DocumentServiceImpl implements DocumentService {
         log.info("확인4-START generateHighlightedPdf: records={}, pdf={}",
                 records == null ? 0 : records.size(), originalPdf.getFileName());
 
-        // ✅ records 없으면 원본 그대로 저장
         if (records == null || records.isEmpty()) {
             try (PDDocument document = PDDocument.load(originalPdf.toFile())) {
                 document.save(outputPdf.toFile());
@@ -207,15 +208,18 @@ public class DocumentServiceImpl implements DocumentService {
 
         try (PDDocument document = PDDocument.load(originalPdf.toFile())) {
 
-            // ✅ 1) pageNumber 기준으로 레코드 그룹핑 (해당 페이지에만 작업)
+            // ✅ 실제로 찍힌 결과 기준: overlay 데이터
+            List<HighlightMark> marks = new ArrayList<>();
+            EnumMap<HighlightType, Integer> summaryCounts = new EnumMap<>(HighlightType.class);
+
+            // ✅ pageNumber 기준으로 레코드 그룹핑
             Map<Integer, List<VisitSummaryRecord>> byPage = new HashMap<>();
 
             for (VisitSummaryRecord r : records) {
                 Integer raw = r.getPageNumber();
                 if (raw == null) continue;
 
-                // ⚠️ pageNumber가 1-based면 아래 한 줄로 바꿔:
-                // int pageIndex = raw - 1;
+                // ⚠️ pageNumber가 1-based면 raw - 1
                 int pageIndex = raw;
 
                 if (pageIndex < 0 || pageIndex >= document.getNumberOfPages()) {
@@ -228,16 +232,12 @@ public class DocumentServiceImpl implements DocumentService {
 
             int highlightCount = 0;
 
-            // ✅ 2) 실제 레코드가 있는 페이지만 순회
             for (Map.Entry<Integer, List<VisitSummaryRecord>> entry : byPage.entrySet()) {
                 int pageIndex = entry.getKey();
                 PDPage page = document.getPage(pageIndex);
                 float pageHeight = page.getMediaBox().getHeight();
 
-                // ✅ 3) 같은 페이지에서 같은 텍스트는 한 번만 위치 계산
-                // (람다 없이 if로 캐시 → effectively final 문제 없음)
                 Map<String, List<PDRectangle>> areasCache = new HashMap<>();
-
                 List<VisitSummaryRecord> pageRecords = entry.getValue();
 
                 for (VisitSummaryRecord record : pageRecords) {
@@ -245,18 +245,15 @@ public class DocumentServiceImpl implements DocumentService {
                     if (types == null || types.isEmpty()) continue;
 
                     for (HighlightType type : types) {
-
                         String rawTarget = switch (type) {
                             case VISIT_OVER_7_DAYS -> record.getInstitutionName();
                             case HAS_HOSPITALIZATION, HAS_SURGERY, MONTH_30_DRUG -> record.getTreatmentDetail();
                         };
-
                         if (rawTarget == null) continue;
 
                         String targetText = rawTarget.trim();
                         if (targetText.isBlank()) continue;
 
-                        // ✅ 캐시키는 정규화 기준으로 (공백 제거한 형태)
                         String normalizedTarget = targetText.replaceAll("\\s+", "");
                         if (normalizedTarget.isBlank()) continue;
 
@@ -265,7 +262,6 @@ public class DocumentServiceImpl implements DocumentService {
                         List<PDRectangle> areas = areasCache.get(cacheKey);
                         if (areas == null) {
                             try {
-                                // calculateTextPositions 내부가 start/end page를 설정하므로 1페이지 처리만 수행
                                 areas = calculateTextPositions(document, pageIndex, targetText);
                             } catch (IOException e) {
                                 throw new RuntimeException("텍스트 위치 계산 실패: pageIndex=" + pageIndex + ", text=" + targetText, e);
@@ -276,7 +272,6 @@ public class DocumentServiceImpl implements DocumentService {
                         if (areas == null || areas.isEmpty()) continue;
 
                         for (PDRectangle rect : areas) {
-                            // ✅ rect는 "텍스트 좌표계" 기준(YDirAdj)이라서 페이지 좌표계로 변환 필요
                             float x1 = rect.getLowerLeftX();
                             float y1 = pageHeight - rect.getUpperRightY();
                             float x2 = rect.getUpperRightX();
@@ -288,7 +283,6 @@ public class DocumentServiceImpl implements DocumentService {
                             highlight.setConstantOpacity(0.3f);
                             highlight.setColor(type.getPDColor());
 
-                            // QuadPoints (UL → UR → LL → LR)
                             highlight.setQuadPoints(new float[]{
                                     x1, y2,
                                     x2, y2,
@@ -305,24 +299,20 @@ public class DocumentServiceImpl implements DocumentService {
                             highlight.setRectangle(bbox);
                             page.getAnnotations().add(highlight);
                             highlightCount++;
+
+                            // ✅ "이 PDF에서 실제로 하이라이트가 찍힌 것"만 집계/마크 추가
+                            summaryCounts.put(type, summaryCounts.getOrDefault(type, 0) + 1);
+
+                            // ✅ overlay 마진바/탭에 쓸 마크도 함께 만든다
+                            marks.add(new HighlightMark(pageIndex, type, bbox));
                         }
                     }
                 }
             }
-            // 1) 조건 계산 + 텍스트 위치 찾아서 marks 수집
-            HighlightMarkCollector highlightMarkCollector = new HighlightMarkCollector();
-            Map<HighlightType, List<String>> keywordsByType = new EnumMap<>(HighlightType.class);
 
-            keywordsByType.put(HighlightType.HAS_HOSPITALIZATION, List.of("입원"));
-            keywordsByType.put(HighlightType.HAS_SURGERY, List.of("수술"));
-            keywordsByType.put(HighlightType.MONTH_30_DRUG, List.of("30일", "30일 초과", "30"));
-            keywordsByType.put(HighlightType.VISIT_OVER_7_DAYS, List.of("7일", "7일 이상", "7"));
-
-            List<HighlightMark> marks = highlightMarkCollector.collectByKeywords(document, keywordsByType);
-
-            // 2) 오버레이 그리기 (요약박스/탭/마진바)
-            PdfOverlayRenderer renderer = new PdfOverlayRenderer();
-            renderer.render(document, marks);
+            // ✅ 오버레이 그리기 (요약=실제 하이라이트 집계, 탭/마진=실제 하이라이트 marks)
+            PdfOverlayRenderer renderer = new PdfOverlayRenderer(document);
+            renderer.render(document, marks, summaryCounts);
 
             document.save(outputPdf.toFile());
             log.info("확인4-END generateHighlightedPdf: highlights={}, elapsedMs={}",
@@ -403,5 +393,20 @@ public class DocumentServiceImpl implements DocumentService {
         }
 
         return rectangles;
+    }
+
+    private Map<HighlightType, Integer> countByTypeFromRecords(List<VisitSummaryRecord> records) {
+        EnumMap<HighlightType, Integer> map = new EnumMap<>(HighlightType.class);
+        if (records == null) return map;
+
+        for (VisitSummaryRecord r : records) {
+            Set<HighlightType> types = r.getHighlightTypes();
+            if (types == null || types.isEmpty()) continue;
+
+            for (HighlightType t : types) {
+                map.put(t, map.getOrDefault(t, 0) + 1);
+            }
+        }
+        return map;
     }
 }

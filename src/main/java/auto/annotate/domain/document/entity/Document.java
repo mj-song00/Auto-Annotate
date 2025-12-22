@@ -21,8 +21,12 @@ public class Document {
     @Column
     private String fileUrl;
 
-    public Document(String originalFileName,  String fileUrl) {
+    @Column(name = "bundle_key", length = 36)
+    private String bundleKey;
+
+    public Document(String originalFileName,  String fileUrl, String bundleKey) {
         this.originalFileName = originalFileName;
         this.fileUrl = fileUrl;
+        this.bundleKey = bundleKey;
     }
 }
