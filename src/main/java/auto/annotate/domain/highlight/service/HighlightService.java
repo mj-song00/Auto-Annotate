@@ -1,9 +1,9 @@
 package auto.annotate.domain.highlight.service;
 
-import auto.annotate.domain.document.dto.response.VisitSummaryRecord;
+import auto.annotate.domain.document.dto.response.PdfRowRecord;
 
 import java.util.List;
 
 public interface HighlightService {
-    List<VisitSummaryRecord> applyHighlights(List<VisitSummaryRecord> records, int condition);
+    List<PdfRowRecord> applyHighlights(List<PdfRowRecord> records, int condition);
 }

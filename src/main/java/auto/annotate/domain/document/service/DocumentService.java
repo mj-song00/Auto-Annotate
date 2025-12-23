@@ -11,4 +11,6 @@ public interface DocumentService {
    List<Document> save(List<MultipartFile> multipartFile);
 
    Resource loadHighlightedFileAsResource(UUID documentId, int condition);
+
+   Resource loadHighlightedByBundle(String bundleKey, int condition);
 }

@@ -19,7 +19,7 @@ public enum HighlightType {
     ),
 
     HAS_SURGERY(
-            HighlightTarget.VISIT_SUMMARY,
+            HighlightTarget.TREATMENT_DETAIL,
             "수술 내역 포함",
             HighlightColor.RED
     ),

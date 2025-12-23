@@ -1,5 +1,6 @@
 package auto.annotate.domain.document.entity;
 
+import auto.annotate.domain.document.dto.HighlightTarget;
 import jakarta.persistence.*;
 import lombok.Getter;
 import lombok.NoArgsConstructor;
@@ -24,9 +25,15 @@ public class Document {
     @Column(name = "bundle_key", length = 36)
     private String bundleKey;
 
-    public Document(String originalFileName,  String fileUrl, String bundleKey) {
+
+    @Enumerated(EnumType.STRING)
+    @Column(name = "target", length = 30) // nullable로 시작(마이그레이션 편하게)
+    private HighlightTarget target;
+
+    public Document(String originalFileName,  String fileUrl, String bundleKey, HighlightTarget target) {
         this.originalFileName = originalFileName;
         this.fileUrl = fileUrl;
         this.bundleKey = bundleKey;
+        this.target = target;
     }
 }

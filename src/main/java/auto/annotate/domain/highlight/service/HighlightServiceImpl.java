@@ -1,13 +1,18 @@
 package auto.annotate.domain.highlight.service;
 
+import auto.annotate.domain.document.dto.HighlightTarget;
 import auto.annotate.domain.document.dto.HighlightType;
+import auto.annotate.domain.document.dto.response.PdfRowRecord;
 import auto.annotate.domain.document.dto.response.VisitSummaryRecord;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 
 import java.util.*;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 import java.util.stream.Collectors;
+
 @Service
 @Slf4j
 @RequiredArgsConstructor
@@ -43,58 +48,96 @@ public class HighlightServiceImpl implements HighlightService {
     }
 
     /**
-     * ✅ 병원명 정규화: 줄바꿈/공백/중점 등으로 깨져도 같은 병원으로 묶기
-     * - aggregation key 용도라 공백 제거까지 함
+     * ✅ 병원명 정규화 (aggregation key 용도)
      */
     private String normalizeInstitutionKey(String raw) {
         if (raw == null) return "";
         String s = raw;
 
-        // 줄바꿈/탭 -> 공백
         s = s.replaceAll("[\\r\\n\\t]+", " ");
-
-        // 중점/유사 점 제거
         s = s.replaceAll("[·•∙⋅]", " ");
-
-        // 다중 공백 압축
         s = s.replaceAll("\\s{2,}", " ").trim();
 
-        // ✅ 키로는 공백 제거해서 "서 울병원" 같은 케이스도 합침
+        // ✅ 키는 공백 제거
         return s.replace(" ", "");
     }
 
-    /** (선택) 약국 제외하고 싶으면 true 반환 */
-    private boolean isPharmacy(String institutionName) {
-        if (institutionName == null) return false;
-        String s = institutionName.replaceAll("\\s+", "");
-        return s.contains("약국");
-    }
+//    /** (선택) 약국 제외 */
+//    private boolean isPharmacy(String institutionName) {
+//        if (institutionName == null) return false;
+//        String s = institutionName.replaceAll("\\s+", "");
+//        return s.contains("약국");
+//    }
 
     @Override
-    public List<VisitSummaryRecord> applyHighlights(List<VisitSummaryRecord> records, int condition) {
+    public List<PdfRowRecord> applyHighlights(List<PdfRowRecord> records, int condition) {
         if (records == null || records.isEmpty()) return List.of();
 
-        // ✅ 병원별 "외래일수 누적" 계산 (7일 이상 병원 key 찾기)
-        Set<String> hospitalKeysWith7OutpatientDays = findHospitalKeysWith7OutpatientDays(records);
+        HighlightType onlyType = mapConditionToType(condition);
+
+        // ✅ 필요한 사전 계산만
+        Set<String> hospitalKeysWith7OutpatientDays = Set.of();
+        if (onlyType == HighlightType.VISIT_OVER_7_DAYS) {
+            hospitalKeysWith7OutpatientDays = findHospitalKeysWith7OutpatientDays(records);
+        }
+
+        log.info("applyHighlights condition={}, onlyType={}, recordsSize={}, keysSize={}",
+                condition, onlyType, records.size(), hospitalKeysWith7OutpatientDays.size());
+        log.info("7days hospital keys sample={}",
+                hospitalKeysWith7OutpatientDays.stream().limit(5).toList());
+        final Set<String> finalHospitalKeys = hospitalKeysWith7OutpatientDays;
 
         return records.stream()
-                .map(r -> applyRule(r, hospitalKeysWith7OutpatientDays))
+                .map(r -> applyRuleByCondition(r, onlyType, finalHospitalKeys))
                 .toList();
     }
 
+    private HighlightType mapConditionToType(int condition) {
+        return switch (condition) {
+            case 0 -> HighlightType.VISIT_OVER_7_DAYS;
+            case 1 -> HighlightType.MONTH_30_DRUG;
+            case 2 -> HighlightType.HAS_HOSPITALIZATION;
+            case 3 -> HighlightType.HAS_SURGERY;
+            default -> HighlightType.VISIT_OVER_7_DAYS;
+        };
+    }
+
+    /**
+     * ✅ condition(onlyType)에 해당하는 룰만 적용해서 highlightTypes를 세팅한다.
+     * - immutable 방식: record.withHighlightTypes(types) 사용
+     */
+    private PdfRowRecord applyRuleByCondition(
+            PdfRowRecord r,
+            HighlightType onlyType,
+            Set<String> hospitalKeysWith7OutpatientDays
+    ) {
+        Set<HighlightType> types = new HashSet<>(r.getHighlightTypes());
+
+        if (onlyType == HighlightType.VISIT_OVER_7_DAYS) {
+            String key = normalizeHospitalKey(r.getInstitutionName());
+
+            // ✅ 요약에서 계산한 병원 Set을 "전체 target 문서"에 전파
+            if (!key.isBlank() && hospitalKeysWith7OutpatientDays.contains(key)) {
+                types.add(HighlightType.VISIT_OVER_7_DAYS);
+            }
+        }
+
+        return r.withHighlightTypes(types);
+    }
+
+
+    // 기존 "전체 룰" 적용 메서드는 남겨둬도 되지만,
+    // condition별만 쓸 거면 사실상 applyRuleByCondition만 사용하면 됨.
     private VisitSummaryRecord applyRule(VisitSummaryRecord record, Set<String> hospitalKeysWith7OutpatientDays) {
         if (record == null) return null;
 
         Set<HighlightType> types = new HashSet<>();
-
         InOutDays d = parseInOutDays(record.getDaysOfStayOrVisit());
 
-        // ✅ 입원(기간 상관 없음)
         if (d.inpatient > 0) {
             types.add(HighlightType.HAS_HOSPITALIZATION);
         }
 
-        // ✅ 한 병원 7일 이상 내원: "정규화 key" 기준으로 비교
         String key = normalizeInstitutionKey(record.getInstitutionName());
         if (!key.isEmpty() && hospitalKeysWith7OutpatientDays.contains(key)) {
             types.add(HighlightType.VISIT_OVER_7_DAYS);
@@ -103,30 +146,67 @@ public class HighlightServiceImpl implements HighlightService {
         return types.isEmpty() ? record : record.withHighlightTypes(types);
     }
 
-    private Set<String> findHospitalKeysWith7OutpatientDays(List<VisitSummaryRecord> records) {
-        Map<String, Integer> outpatientSumByKey = new HashMap<>();
+    private Set<String> findHospitalKeysWith7OutpatientDays(List<PdfRowRecord> records) {
+        Map<String, Integer> sumByHospital = new HashMap<>();
 
-        for (VisitSummaryRecord r : records) {
-            if (r == null) continue;
+        for (PdfRowRecord r : records) {
+            // ✅ 누적 일수 근거는 진료정보요약만 사용
+            if (r.getTarget() != HighlightTarget.VISIT_SUMMARY) continue;
 
-            String name = r.getInstitutionName();
-            if (name == null || name.isBlank()) continue;
+            String key = normalizeHospitalKey(r.getInstitutionName());
+            if (key.isBlank()) continue;
 
-            // (선택) 약국 제외
-            if (isPharmacy(name)) continue;
+            int totalDays = parseTotalDays(r.getDaysOfStayOrVisit()); // 11(0) -> 11
+            if (totalDays <= 0) continue;
 
-            int outpatient = parseInOutDays(r.getDaysOfStayOrVisit()).outpatient;
-            if (outpatient <= 0) continue;
-
-            String key = normalizeInstitutionKey(name);
-            if (key.isEmpty()) continue;
-
-            outpatientSumByKey.merge(key, outpatient, Integer::sum);
+            sumByHospital.merge(key, totalDays, Integer::sum);
         }
 
-        return outpatientSumByKey.entrySet().stream()
+        return sumByHospital.entrySet().stream()
                 .filter(e -> e.getValue() >= 7)
                 .map(Map.Entry::getKey)
-                .collect(java.util.stream.Collectors.toSet());
+                .collect(Collectors.toSet());
+    }
+
+    private String normalizeHospitalKey(String institutionName) {
+        if (institutionName == null) return "";
+        String s = institutionName.trim();
+
+        // 공백/탭/줄바꿈 제거
+        s = s.replaceAll("\\s+", "");
+
+        // 특수문자 제거(한글/영문/숫자만 남김)
+        s = s.replaceAll("[^가-힣a-zA-Z0-9]", "");
+
+        // 영문은 소문자로 통일
+        return s.toLowerCase();
+    }
+
+    /** 예: "11(0)" -> 11, "0(8)" -> 8, "3(5)" -> 8, "7" -> 7 */
+    private int parseTotalDays(String daysOfStayOrVisit) {
+        if (daysOfStayOrVisit == null) return 0;
+        String s = daysOfStayOrVisit.trim();
+
+        Matcher m = Pattern.compile("^(\\d+)\\((\\d+)\\)$").matcher(s);
+        if (m.find()) {
+            int inDays = safeParseInt(m.group(1));
+            int outDays = safeParseInt(m.group(2));
+            return inDays + outDays;
+        }
+
+        Matcher m2 = Pattern.compile("^(\\d+)$").matcher(s);
+        if (m2.find()) {
+            return safeParseInt(m2.group(1));
+        }
+
+        return 0;
+    }
+
+    private int safeParseInt(String v) {
+        try {
+            return Integer.parseInt(v);
+        } catch (Exception e) {
+            return 0;
+        }
     }
 }

@@ -54,7 +54,8 @@ public class DocumentController {
     @GetMapping("/{documentId}/highlighted")
     public ResponseEntity<Resource> getHighlightedDocument(
             @PathVariable UUID documentId,
-            @RequestParam(name = "condition", defaultValue = "0") int condition
+            @RequestParam(name = "condition", defaultValue = "0") int condition,
+            @RequestParam(name = "download", defaultValue = "false") boolean download
     ) {
         log.info("🔥 highlighted 요청 documentId={}, condition={}", documentId, condition);
 
@@ -64,10 +65,12 @@ public class DocumentController {
             throw new BaseException(ExceptionEnum.DOCUMENT_NOT_FOUND);
         }
 
+        String dispositionType = download ? "attachment" : "inline";
+
         return ResponseEntity.ok()
                 .contentType(MediaType.APPLICATION_PDF)
                 .header(HttpHeaders.CONTENT_DISPOSITION,
-                        "inline; filename=\"" + resource.getFilename() + "\"")
+                        dispositionType + "; filename=\"" + resource.getFilename() + "\"")
                 .body(resource);
     }
 
@@ -83,5 +86,17 @@ public class DocumentController {
                     return map;
                 })
                 .toList();
+    }
+
+    @GetMapping("/bundles/{bundleKey}/highlighted")
+    public ResponseEntity<Resource> getHighlightedByBundle(
+            @PathVariable String bundleKey,
+            @RequestParam int condition
+    ) {
+        Resource resource = documentService.loadHighlightedByBundle(bundleKey, condition);
+        return ResponseEntity.ok()
+                .contentType(MediaType.APPLICATION_PDF)
+                .header(HttpHeaders.CONTENT_DISPOSITION, "inline; filename=\"highlighted.pdf\"")
+                .body(resource);
     }
 }
