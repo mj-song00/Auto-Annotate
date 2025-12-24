@@ -88,15 +88,15 @@ public class DocumentController {
                 .toList();
     }
 
-    @GetMapping("/bundles/{bundleKey}/highlighted")
-    public ResponseEntity<Resource> getHighlightedByBundle(
-            @PathVariable String bundleKey,
-            @RequestParam int condition
-    ) {
-        Resource resource = documentService.loadHighlightedByBundle(bundleKey, condition);
-        return ResponseEntity.ok()
-                .contentType(MediaType.APPLICATION_PDF)
-                .header(HttpHeaders.CONTENT_DISPOSITION, "inline; filename=\"highlighted.pdf\"")
-                .body(resource);
-    }
+//    @GetMapping("/document/{documentId}/highlighted")
+//    public ResponseEntity<Resource> getHighlighted(
+//            @PathVariable UUID documentId,
+//            @RequestParam int condition
+//    ) {
+//        Resource resource = documentService.loadHighlightedByBundle(documentId, condition);
+//        return ResponseEntity.ok()
+//                .contentType(MediaType.APPLICATION_PDF)
+//                .header(HttpHeaders.CONTENT_DISPOSITION, "inline; filename=\"highlighted.pdf\"")
+//                .body(resource);
+//    }
 }

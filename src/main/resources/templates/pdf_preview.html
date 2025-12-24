@@ -6,36 +6,50 @@
     <!-- PDF.js -->
     <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/2.16.105/pdf.min.js"></script>
     <script>
-        // ✅ workerSrc 지정 (중요)
         pdfjsLib.GlobalWorkerOptions.workerSrc =
             "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/2.16.105/pdf.worker.min.js";
     </script>
 </head>
+
 <body>
 <h1>PDF 미리보기</h1>
-<div style="display:none" id="bundleDebug" th:text="${bundleKey}">NO_BUNDLEKEY ㅇㄹㄴㄹㅇㄴ</div>
 
-<!-- ✅ 버튼은 "조건번호(1~4)"를 넘긴다 -->
-<button type="button" onclick="openPdfModal(0)">동일 병원 7일 이상</button>
-<button type="button" onclick="openPdfModal(1)">30일 초과 약제</button>
-<button type="button" onclick="openPdfModal(2)">입원</button>
-<button type="button" onclick="openPdfModal(3)">수술</button>
+<button id="btn0" type="button" disabled onclick="window.openPdfModal(0)">동일 병원 7일 이상</button>
+<button id="btn1" type="button" disabled onclick="window.openPdfModal(1)">30일 초과 약제</button>
+<button id="btn2" type="button" disabled onclick="window.openPdfModal(2)">입원</button>
+<button id="btn3" type="button" disabled onclick="window.openPdfModal(3)">수술</button>
 
-<div id="pdfModal" style="display:none; position:fixed; top:10%; left:10%; width:80%; height:80%; background:#fff; border:1px solid #ccc; padding:10px; overflow:auto;">
+<div id="pdfModal"
+     style="display:none; position:fixed; top:10%; left:10%; width:80%; height:80%;
+            background:#fff; border:1px solid #ccc; padding:10px; overflow:auto;">
     <canvas id="pdfCanvas"></canvas>
+
     <div style="margin-top:10px;">
         <button id="prevPage">◀ 이전</button>
         <button id="nextPage">다음 ▶</button>
         <span>페이지: <span id="pageNum"></span> / <span id="pageCount"></span></span>
     </div>
+
     <div style="margin-top:10px;">
         <button onclick="downloadPdf()">다운로드</button>
         <button onclick="closePdfModal()">닫기</button>
     </div>
 </div>
 
+<!-- ✅ 서버 모델(documentIds)을 JS로 주입 -->
 <script th:inline="javascript">
-    document.addEventListener("DOMContentLoaded", function() {
+    const documentIds = /*[[${documentIds}]]*/ [];
+</script>
+
+<script>
+    document.addEventListener("DOMContentLoaded", function () {
+
+        // ✅ 추가 API 없이: 첫 번째 문서를 기본으로 사용
+        let documentId = (documentIds && documentIds.length > 0) ? String(documentIds[0]) : "";
+
+        console.log("documentIds =", documentIds);
+        console.log("selected documentId =", documentId);
+
         let currentConditionNo = null;
         let pdfDoc = null;
         let pageNum = 1;
@@ -43,16 +57,30 @@
         let pageNumPending = null;
 
         const scale = 1.5;
-        const canvas = document.getElementById('pdfCanvas');
-        const ctx = canvas.getContext('2d');
+        const canvas = document.getElementById("pdfCanvas");
+        const ctx = canvas.getContext("2d");
+        const modal = document.getElementById("pdfModal");
 
-        const bundleKey = /*[[${bundleKey}]]*/ "";
-        console.log("bundleKey:", bundleKey);
+        function setButtonsEnabled(enabled) {
+            ["btn0","btn1","btn2","btn3"].forEach(id => {
+                const el = document.getElementById(id);
+                if (el) el.disabled = !enabled;
+            });
+        }
+
+        // ✅ 문서가 없으면 버튼만 막고 콘솔에만 남김
+        if (!documentId) {
+            console.error("documentIds가 비어있음. 서버가 model에 documentIds 내려주는지/DB에 Document가 있는지 확인");
+            setButtonsEnabled(false);
+            return;
+        } else {
+            setButtonsEnabled(true);
+        }
 
         function resetViewerState() {
             ctx.clearRect(0, 0, canvas.width, canvas.height);
-            document.getElementById('pageNum').textContent = "";
-            document.getElementById('pageCount').textContent = "";
+            document.getElementById("pageNum").textContent = "";
+            document.getElementById("pageCount").textContent = "";
             pageNum = 1;
             pageRendering = false;
             pageNumPending = null;
@@ -63,46 +91,9 @@
             pdfDoc = null;
         }
 
-        window.openPdfModal = function(conditionNo) {
-            console.log("openPdfModal called:", conditionNo, "bundleKey=", bundleKey);
-
-            currentConditionNo = conditionNo;
-
-            resetViewerState();
-
-            const modal = document.getElementById('pdfModal');
-            if (!modal) {
-                console.error("pdfModal 엘리먼트가 없음. id='pdfModal' 확인");
-                return;
-            }
-
-            modal.style.display = 'block';  //  먼저 모달을 연다
-
-            if (!bundleKey) {
-                console.error("bundleKey가 비어있음 (preview/{bundleKey}로 접속해야 함)");
-                return; // 모달은 열린 채로 두고 에러만 표시
-            }
-
-            if (typeof pdfjsLib === "undefined") {
-                console.error("pdfjsLib가 없음. PDF.js 스크립트 로드 확인");
-                return;
-            }
-
-            const url = `/document/bundles/${bundleKey}/highlighted?condition=${currentConditionNo}`;
-            console.log("요청 URL:", url);
-
-            pdfjsLib.getDocument(url).promise
-                .then(pdf => {
-                    pdfDoc = pdf;
-                    document.getElementById('pageCount').textContent = pdfDoc.numPages;
-                    renderPage(pageNum);
-                })
-                .catch(err => console.error("PDF 로드 실패:", err));
-        };
-
-
         function renderPage(num) {
             if (!pdfDoc) return;
+
             pageRendering = true;
 
             pdfDoc.getPage(num).then(page => {
@@ -114,7 +105,7 @@
 
                 renderTask.promise.then(() => {
                     pageRendering = false;
-                    document.getElementById('pageNum').textContent = num;
+                    document.getElementById("pageNum").textContent = num;
 
                     if (pageNumPending !== null) {
                         const next = pageNumPending;
@@ -133,27 +124,65 @@
             else renderPage(num);
         }
 
-        document.getElementById('prevPage').addEventListener('click', () => {
+        document.getElementById("prevPage").addEventListener("click", () => {
             if (!pdfDoc || pageNum <= 1) return;
             pageNum--;
             queueRenderPage(pageNum);
         });
 
-        document.getElementById('nextPage').addEventListener('click', () => {
+        document.getElementById("nextPage").addEventListener("click", () => {
             if (!pdfDoc || pageNum >= pdfDoc.numPages) return;
             pageNum++;
             queueRenderPage(pageNum);
         });
 
-        window.downloadPdf = function() {
-            if (!bundleKey || !currentConditionNo) return;
-            // 다운로드도 bundleKey 기반으로 맞추는 걸 추천
-            const url = `/document/bundles/${bundleKey}/download?condition=${currentConditionNo}`;
+        window.openPdfModal = function (conditionNo) {
+            console.log("openPdfModal:", conditionNo, "documentId=", documentId);
+
+            currentConditionNo = conditionNo;
+
+            resetViewerState();
+            modal.style.display = "block";
+
+            const url = `/document/${documentId}/highlighted?condition=${conditionNo}&download=false&t=${Date.now()}`;
+            console.log("요청 URL:", url);
+
+            fetch(url, { cache: "no-store" })
+                .then(async (res) => {
+                    const ct = res.headers.get("content-type") || "";
+                    const buf = await res.arrayBuffer();
+
+                    console.log("fetch status:", res.status, res.statusText, "content-type:", ct, "bytes:", buf.byteLength);
+
+                    if (!res.ok) {
+                        const head = new TextDecoder().decode(buf.slice(0, 300));
+                        console.error("server error head:", head);
+                        throw new Error("HTTP " + res.status);
+                    }
+                    if (!ct.includes("pdf")) {
+                        const head = new TextDecoder().decode(buf.slice(0, 300));
+                        console.error("not pdf head:", head);
+                        throw new Error("Not a PDF response");
+                    }
+                    return buf;
+                })
+                .then(buf => pdfjsLib.getDocument({ data: buf }).promise)
+                .then(pdf => {
+                    pdfDoc = pdf;
+                    document.getElementById("pageCount").textContent = pdfDoc.numPages;
+                    renderPage(1);
+                })
+                .catch(err => console.error("PDF 로드 실패:", err));
+        };
+
+        window.downloadPdf = function () {
+            if (!documentId || currentConditionNo === null) return;
+            const url = `/document/${documentId}/highlighted?condition=${currentConditionNo}&download=true&t=${Date.now()}`;
             window.location.href = url;
         };
 
-        window.closePdfModal = function() {
-            document.getElementById('pdfModal').style.display = 'none';
+        window.closePdfModal = function () {
+            modal.style.display = "none";
             resetViewerState();
         };
     });

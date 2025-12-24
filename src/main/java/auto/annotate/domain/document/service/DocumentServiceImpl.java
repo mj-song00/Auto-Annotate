@@ -102,27 +102,17 @@ public class DocumentServiceImpl implements DocumentService {
     @Override
     public Resource loadHighlightedFileAsResource(UUID documentId, int condition) {
 
-        log.info("🔥 highlighted 요청 documentId={}, condition={}", documentId, condition);
-
-        // 1) 기준 document로 bundleKey 확보
         Document base = documentRepository.findById(documentId)
                 .orElseThrow(() -> new BaseException(ExceptionEnum.DOCUMENT_NOT_FOUND));
 
         String bundleKey = base.getBundleKey();
-        if (bundleKey == null || bundleKey.isBlank()) {
-            throw new BaseException(ExceptionEnum.DOCUMENT_NOT_FOUND); // 적당히 바꿔도 됨
-        }
 
-        // 2) condition -> HighlightType
-        HighlightType onlyType = mapConditionToType(condition);
-
-        // 3) HighlightType이 요구하는 target PDF 선택
-        HighlightTarget targetToRender = onlyType.getTarget();
+        HighlightType type = mapConditionToType(condition);
+        HighlightTarget targetToRender = type.getTarget();
 
         Document targetDoc = documentRepository.findByBundleKeyAndTarget(bundleKey, targetToRender)
                 .orElseThrow(() -> new BaseException(ExceptionEnum.DOCUMENT_NOT_FOUND));
 
-        // 4) 원본 PDF 경로
         Path originalPdfPath = Paths.get(uploadDir, targetDoc.getFileUrl());
 
         if (!Files.exists(originalPdfPath)) {
@@ -136,8 +126,8 @@ public class DocumentServiceImpl implements DocumentService {
         long marked = highlightedRecords.stream()
                 .filter(r -> r.getHighlightTypes() != null && !r.getHighlightTypes().isEmpty())
                 .count();
-        log.info("before generate: bundleKey={}, targetToRender={}, condition={}, type={}, markedRows={}",
-                bundleKey, targetToRender, condition, onlyType, marked);
+        log.info("before generate: bundleKey={}, targetToRender={}, condition={}, markedRows={}",
+                bundleKey, targetToRender, condition,  marked);
 
         Path out = resolveHighlightedOutputPath(bundleKey, targetToRender, condition);
         generateHighlightedPdf(highlightedRecords, originalPdfPath, out);
@@ -146,11 +136,11 @@ public class DocumentServiceImpl implements DocumentService {
     }
 
     @Override
-    public Resource loadHighlightedByBundle(String bundleKey, int condition) {
+    public Resource loadHighlightedByBundle(UUID documentIdy, int condition) {
         HighlightType type = mapConditionToType(condition);
         HighlightTarget needed = type.getTarget();
 
-        Document doc = documentRepository.findFirstByBundleKeyAndTarget(bundleKey, needed)
+        Document doc = documentRepository.findFirstByBundleKeyAndTarget(documentIdy, needed)
                 .orElseThrow(() -> new BaseException(ExceptionEnum.DOCUMENT_NOT_FOUND));
 
         return loadHighlightedFileAsResource(doc.getId(), condition);

@@ -62,12 +62,12 @@ public class HighlightServiceImpl implements HighlightService {
         return s.replace(" ", "");
     }
 
-//    /** (선택) 약국 제외 */
-//    private boolean isPharmacy(String institutionName) {
-//        if (institutionName == null) return false;
-//        String s = institutionName.replaceAll("\\s+", "");
-//        return s.contains("약국");
-//    }
+    /** 약국 제외 */
+    private boolean isPharmacy(String institutionName) {
+        if (institutionName == null) return false;
+        String s = institutionName.replaceAll("\\s+", "");
+        return s.contains("약국");
+    }
 
     @Override
     public List<PdfRowRecord> applyHighlights(List<PdfRowRecord> records, int condition) {
@@ -86,6 +86,11 @@ public class HighlightServiceImpl implements HighlightService {
         log.info("7days hospital keys sample={}",
                 hospitalKeysWith7OutpatientDays.stream().limit(5).toList());
         final Set<String> finalHospitalKeys = hospitalKeysWith7OutpatientDays;
+
+        long marked = records.stream()
+                .filter(r -> r.getHighlightTypes().contains(onlyType))
+                .count();
+        log.info("after apply: type={}, markedRows={}", onlyType, marked);
 
         return records.stream()
                 .map(r -> applyRuleByCondition(r, onlyType, finalHospitalKeys))
@@ -113,17 +118,32 @@ public class HighlightServiceImpl implements HighlightService {
     ) {
         Set<HighlightType> types = new HashSet<>(r.getHighlightTypes());
 
-        if (onlyType == HighlightType.VISIT_OVER_7_DAYS) {
-            String key = normalizeHospitalKey(r.getInstitutionName());
+        switch (onlyType) {
+            case VISIT_OVER_7_DAYS -> {
+                String key = normalizeHospitalKey(r.getInstitutionName());
+                if (!key.isBlank() && hospitalKeysWith7OutpatientDays.contains(key)) {
+                    types.add(HighlightType.VISIT_OVER_7_DAYS);
+                }
+            }
 
-            // ✅ 요약에서 계산한 병원 Set을 "전체 target 문서"에 전파
-            if (!key.isBlank() && hospitalKeysWith7OutpatientDays.contains(key)) {
-                types.add(HighlightType.VISIT_OVER_7_DAYS);
+            case HAS_HOSPITALIZATION -> {
+                // ✅ 입원은 요약에서만 판단하는 게 안전
+                if (r.getTarget() == HighlightTarget.VISIT_SUMMARY) {
+                    int inpatientDays = parseInpatientDays(r.getDaysOfStayOrVisit());
+                    if (inpatientDays > 0) {
+                        types.add(HighlightType.HAS_HOSPITALIZATION);
+                    }
+                }
+            }
+
+            default -> {
+                // 나머지 조건은 추후 추가
             }
         }
 
         return r.withHighlightTypes(types);
     }
+
 
 
     // 기존 "전체 룰" 적용 메서드는 남겨둬도 되지만,
@@ -150,8 +170,11 @@ public class HighlightServiceImpl implements HighlightService {
         Map<String, Integer> sumByHospital = new HashMap<>();
 
         for (PdfRowRecord r : records) {
-            // ✅ 누적 일수 근거는 진료정보요약만 사용
+            // 누적 일수 근거는 진료정보요약만 사용
             if (r.getTarget() != HighlightTarget.VISIT_SUMMARY) continue;
+
+            //  약국 제외
+            if (isPharmacy(r.getInstitutionName())) continue;
 
             String key = normalizeHospitalKey(r.getInstitutionName());
             if (key.isBlank()) continue;
@@ -199,6 +222,17 @@ public class HighlightServiceImpl implements HighlightService {
             return safeParseInt(m2.group(1));
         }
 
+        return 0;
+    }
+
+    private int parseInpatientDays(String s) {
+        if (s == null) return 0;
+        s = s.trim();
+
+        var m = java.util.regex.Pattern.compile("^(\\d+)\\((\\d+)\\)$").matcher(s);
+        if (m.find()) {
+            return safeParseInt(m.group(1)); // 괄호 앞 = 입원일수
+        }
         return 0;
     }
 
