@@ -5,7 +5,6 @@ import auto.annotate.common.exception.ExceptionEnum;
 import auto.annotate.domain.document.dto.HighlightTarget;
 import auto.annotate.domain.document.dto.HighlightType;
 import auto.annotate.domain.document.dto.response.PdfRowRecord;
-import auto.annotate.domain.document.dto.response.VisitSummaryRecord;
 import auto.annotate.domain.document.entity.Document;
 import auto.annotate.domain.document.repository.DocumentRepository;
 import auto.annotate.domain.highlight.overlay.HighlightMark;
@@ -22,16 +21,16 @@ import org.apache.pdfbox.text.TextPosition;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.core.io.FileSystemResource;
 import org.springframework.core.io.Resource;
-import org.springframework.core.io.UrlResource;
 import org.springframework.stereotype.Service;
 import org.springframework.web.multipart.MultipartFile;
 
 import java.io.IOException;
-import java.net.MalformedURLException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.util.*;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
 @Service
 @Slf4j
@@ -39,6 +38,7 @@ import java.util.*;
 public class DocumentServiceImpl implements DocumentService {
     private final DocumentRepository documentRepository;
     private final HighlightService highlightService;
+
 
     @Value("${pdf.file.upload-dir}")
     private String uploadDir;
@@ -130,9 +130,31 @@ public class DocumentServiceImpl implements DocumentService {
                 bundleKey, targetToRender, condition,  marked);
 
         Path out = resolveHighlightedOutputPath(bundleKey, targetToRender, condition);
-        generateHighlightedPdf(highlightedRecords, originalPdfPath, out);
+        generateHighlightedPdf(highlightedRecords, originalPdfPath, out, condition);
 
         return new FileSystemResource(out);
+    }
+
+    private static final Pattern INOUT_ANYWHERE = Pattern.compile("(\\d+)\\((\\d+)\\)");
+
+    private List<String> findHospitalizationTokensOnPage(PDDocument document, int pageIndex) throws IOException {
+        PDFTextStripper stripper = new PDFTextStripper();
+        stripper.setStartPage(pageIndex + 1);
+        stripper.setEndPage(pageIndex + 1);
+
+        String norm = stripper.getText(document).replaceAll("\\s+", "");
+        List<String> tokens = new ArrayList<>();
+
+        Matcher m = INOUT_ANYWHERE.matcher(norm);
+        while (m.find()) {
+            int inpatient = safeParseInt(m.group(1));
+            if (inpatient > 0) tokens.add(m.group(0));  // 예: "11(0)"
+        }
+        return tokens;
+    }
+
+    private int safeParseInt(String v) {
+        try { return Integer.parseInt(v); } catch (Exception e) { return 0; }
     }
 
     @Override
@@ -150,21 +172,21 @@ public class DocumentServiceImpl implements DocumentService {
      * (선택) highlightService가 전체 타입을 세팅해주는 방식이라면 condition별로만 남기고 싶을 때 사용
      * - VisitSummaryRecord.getHighlightTypes()가 "mutable set"일 때만 안전함
      */
-    private List<VisitSummaryRecord> filterByCondition(
-            List<VisitSummaryRecord> original,
-            List<VisitSummaryRecord> applied,
-            int condition
-    ) {
-        HighlightType only = mapConditionToType(condition);
-        if (only == null) return applied;
-
-        for (VisitSummaryRecord r : applied) {
-            Set<HighlightType> types = r.getHighlightTypes();
-            if (types == null) continue;
-            types.retainAll(Collections.singleton(only));
-        }
-        return applied;
-    }
+//    private List<VisitSummaryRecord> filterByCondition(
+//            List<VisitSummaryRecord> original,
+//            List<VisitSummaryRecord> applied,
+//            int condition
+//    ) {
+//        HighlightType only = mapConditionToType(condition);
+//        if (only == null) return applied;
+//
+//        for (VisitSummaryRecord r : applied) {
+//            Set<HighlightType> types = r.getHighlightTypes();
+//            if (types == null) continue;
+//            types.retainAll(Collections.singleton(only));
+//        }
+//        return applied;
+//    }
 
     private HighlightType mapConditionToType(int condition) {
         // 너의 condition 매핑 규칙에 맞게 수정
@@ -181,19 +203,19 @@ public class DocumentServiceImpl implements DocumentService {
      * ✅ 페이지별로 텍스트를 뽑아서 record에 pageNumber를 넣어준다.
      * (지금 generateHighlightedPdf가 pageNumber 기반으로 하이라이트를 찍기 때문)
      */
-    private static final java.util.regex.Pattern ROW_PATTERN =
-            java.util.regex.Pattern.compile(
-                    // (선택) 순번
-                    "^(?:\\s*(\\d+)\\s+)?" +
-                            // 병원명 (공백 포함)
-                            "(.+?)\\s+" +
-                            // 입원(외래)일수: 11(0) or 11
-                            "(\\d+(?:\\(\\d+\\))?)\\s+" +
-                            // 금액 3개(콤마 포함)
-                            "([\\d,]+)\\s+([\\d,]+)\\s+([\\d,]+)" +
-                            // (선택) 뒤에 남는 텍스트
-                            "(?:\\s+(.*))?$"
-            );
+//    private static final java.util.regex.Pattern ROW_PATTERN =
+//            java.util.regex.Pattern.compile(
+//                    // (선택) 순번
+//                    "^(?:\\s*(\\d+)\\s+)?" +
+//                            // 병원명 (공백 포함)
+//                            "(.+?)\\s+" +
+//                            // 입원(외래)일수: 11(0) or 11
+//                            "(\\d+(?:\\(\\d+\\))?)\\s+" +
+//                            // 금액 3개(콤마 포함)
+//                            "([\\d,]+)\\s+([\\d,]+)\\s+([\\d,]+)" +
+//                            // (선택) 뒤에 남는 텍스트
+//                            "(?:\\s+(.*))?$"
+//            );
 
     /**
      * ✅ PDF(docType=HighlightTarget)별로 "행(row)"을 복원(줄바꿈 합치기)한 뒤 VisitSummaryRecord로 파싱한다.
@@ -206,131 +228,131 @@ public class DocumentServiceImpl implements DocumentService {
     private static final java.util.regex.Pattern ROW_START_SEQ_DATE =
             java.util.regex.Pattern.compile("^\\d+\\s+\\d{4}-\\d{2}-\\d{2}\\s+.*"); // "1 2025-04-29 ..."
 
-    private List<PdfRowRecord> parsePdfToRecordsFromPdf(Path pdfPath) {
-        log.info("📄 parsePdfToRecordsFromPdf: {}", pdfPath.getFileName());
-
-        List<PdfRowRecord> out = new ArrayList<>();
-
-        try (PDDocument doc = PDDocument.load(pdfPath.toFile())) {
-            PDFTextStripper stripper = new PDFTextStripper();
-
-            // 1) 이 PDF가 어떤 타입인지(=어떤 파서를 쓸지) 감지
-            HighlightTarget target = detectHighlightTarget(doc, stripper);
-            log.info("📌 detected target={}", target);
-
-            // 2) 줄바꿈으로 쪼개진 한 행(row)을 다시 합치기 위한 버퍼
-            StringBuilder rowBuf = new StringBuilder();
-
-            int pages = doc.getNumberOfPages();
-            for (int pageIndex = 0; pageIndex < pages; pageIndex++) {
-                stripper.setStartPage(pageIndex + 1);
-                stripper.setEndPage(pageIndex + 1);
-
-                String text = stripper.getText(doc);
-                String[] lines = text.split("\\r?\\n");
-
-                for (String rawLine : lines) {
-                    String line = rawLine == null ? "" : rawLine.trim();
-                    if (line.isEmpty()) continue;
-
-                    // 헤더/설명 줄 제거 (필요하면 더 추가)
-                    if (isHeaderOrNoiseLine(line)) continue;
-
-                    boolean newRow = isRowStart(target, line);
-
-                    if (newRow) {
-                        flushRow(out, target, rowBuf, pageIndex);
-                        rowBuf.append(line);
-                    } else {
-                        // 같은 행의 줄바꿈 조각이면 이어붙임
-                        if (!rowBuf.isEmpty()) rowBuf.append(" ");
-                        rowBuf.append(line);
-                    }
-                }
-            }
-
-            // 마지막 버퍼 flush
-            flushRow(out, target, rowBuf, Math.max(0, pages - 1));
-            return out;
-
-        } catch (IOException e) {
-            throw new BaseException(ExceptionEnum.FILE_READ_ERROR);
-        }
-    }
+//    private List<PdfRowRecord> parsePdfToRecordsFromPdf(Path pdfPath) {
+//        log.info("📄 parsePdfToRecordsFromPdf: {}", pdfPath.getFileName());
+//
+//        List<PdfRowRecord> out = new ArrayList<>();
+//
+//        try (PDDocument doc = PDDocument.load(pdfPath.toFile())) {
+//            PDFTextStripper stripper = new PDFTextStripper();
+//
+//            // 1) 이 PDF가 어떤 타입인지(=어떤 파서를 쓸지) 감지
+//            HighlightTarget target = detectHighlightTarget(doc, stripper);
+//            log.info("📌 detected target={}", target);
+//
+//            // 2) 줄바꿈으로 쪼개진 한 행(row)을 다시 합치기 위한 버퍼
+//            StringBuilder rowBuf = new StringBuilder();
+//
+//            int pages = doc.getNumberOfPages();
+//            for (int pageIndex = 0; pageIndex < pages; pageIndex++) {
+//                stripper.setStartPage(pageIndex + 1);
+//                stripper.setEndPage(pageIndex + 1);
+//
+//                String text = stripper.getText(doc);
+//                String[] lines = text.split("\\r?\\n");
+//
+//                for (String rawLine : lines) {
+//                    String line = rawLine == null ? "" : rawLine.trim();
+//                    if (line.isEmpty()) continue;
+//
+//                    // 헤더/설명 줄 제거 (필요하면 더 추가)
+//                    if (isHeaderOrNoiseLine(line)) continue;
+//
+//                    boolean newRow = isRowStart(target, line);
+//
+//                    if (newRow) {
+//                        flushRow(out, target, rowBuf, pageIndex);
+//                        rowBuf.append(line);
+//                    } else {
+//                        // 같은 행의 줄바꿈 조각이면 이어붙임
+//                        if (!rowBuf.isEmpty()) rowBuf.append(" ");
+//                        rowBuf.append(line);
+//                    }
+//                }
+//            }
+//
+//            // 마지막 버퍼 flush
+//            flushRow(out, target, rowBuf, Math.max(0, pages - 1));
+//            return out;
+//
+//        } catch (IOException e) {
+//            throw new BaseException(ExceptionEnum.FILE_READ_ERROR);
+//        }
+//    }
 
     /**
      * ✅ PDF 첫 페이지 텍스트로 HighlightTarget 판별
      * - 네가 올린 4종 PDF 제목 문자열을 기준으로 분기
      */
-    private HighlightTarget detectHighlightTarget(PDDocument doc, PDFTextStripper stripper) throws IOException {
-        stripper.setStartPage(1);
-        stripper.setEndPage(1);
-        String firstPage = stripper.getText(doc);
-
-        if (firstPage.contains("진료정보요약")) return HighlightTarget.VISIT_SUMMARY;
-        if (firstPage.contains("기본진료정보")) return HighlightTarget.DRUG_SUMMARY; // "BASIC"이 없으니 임시 매핑
-        if (firstPage.contains("세부진료정보")) return HighlightTarget.TREATMENT_DETAIL;
-        if (firstPage.contains("처방조제정보")) return HighlightTarget.PRESCRIPTION;
-
-        // fallback(원하는 정책으로 변경 가능)
-        return HighlightTarget.VISIT_SUMMARY;
-    }
+//    private HighlightTarget detectHighlightTarget(PDDocument doc, PDFTextStripper stripper) throws IOException {
+//        stripper.setStartPage(1);
+//        stripper.setEndPage(1);
+//        String firstPage = stripper.getText(doc);
+//
+//        if (firstPage.contains("진료정보요약")) return HighlightTarget.VISIT_SUMMARY;
+//        if (firstPage.contains("기본진료정보")) return HighlightTarget.DRUG_SUMMARY; // "BASIC"이 없으니 임시 매핑
+//        if (firstPage.contains("세부진료정보")) return HighlightTarget.TREATMENT_DETAIL;
+//        if (firstPage.contains("처방조제정보")) return HighlightTarget.PRESCRIPTION;
+//
+//        // fallback(원하는 정책으로 변경 가능)
+//        return HighlightTarget.VISIT_SUMMARY;
+//    }
 
     /**
      * ✅ target별 "새 행 시작" 규칙
      * - 진료정보요약: "순번(숫자) + ..." 형태
      * - 나머지: "순번 + 날짜 + ..." 형태
      */
-    private boolean isRowStart(HighlightTarget target, String line) {
-        return switch (target) {
-            case VISIT_SUMMARY -> ROW_START_SEQ.matcher(line).find();
-            case DRUG_SUMMARY, TREATMENT_DETAIL, PRESCRIPTION -> ROW_START_SEQ_DATE.matcher(line).find();
-        };
-    }
-
-    private boolean isHeaderOrNoiseLine(String line) {
-        // 공통 헤더/설명 제거
-        if (line.startsWith("순번")) return true;
-
-        // 진료정보요약 표 헤더들
-        if (line.contains("병·의원&약국")) return true;
-        if (line.contains("입원(외래)일수")) return true;
-        if (line.contains("총 진료비")) return true;
-        if (line.contains("혜택받은 금액")) return true;
-        if (line.contains("내가 낸 의료비")) return true;
-        if (line.contains("(건강보험 적용분)")) return true;
-        if (line.contains("(진료비)")) return true;
-
-        // 기본/세부/처방 표 헤더들
-        if (line.contains("진료시작일")) return true;
-        if (line.contains("주상병")) return true;
-        if (line.contains("코드")) return true;
-        if (line.contains("진료내역")) return true;
-        if (line.contains("약품명")) return true;
-        if (line.contains("성분명")) return true;
-        if (line.contains("1회")) return true;
-        if (line.contains("투약량")) return true;
-        if (line.contains("투여횟수")) return true;
-        if (line.contains("총")) return true; // "총 투약일수" 등
-
-        // 섹션 제목 자체
-        if (line.contains("진료정보요약")) return true;
-        if (line.contains("기본진료정보")) return true;
-        if (line.contains("세부진료정보")) return true;
-        if (line.contains("처방조제정보")) return true;
-
-        return false;
-    }
-
-    private void flushRow(List<PdfRowRecord> out, HighlightTarget target, StringBuilder rowBuf, int pageIndex) {
-        if (rowBuf == null || rowBuf.isEmpty()) return;
-
-        String row = rowBuf.toString().trim();
-        rowBuf.setLength(0);
-
-        PdfRowRecord parsed = parseRowByTarget(target, row, pageIndex);
-        if (parsed != null) out.add(parsed);
-    }
+//    private boolean isRowStart(HighlightTarget target, String line) {
+//        return switch (target) {
+//            case VISIT_SUMMARY -> ROW_START_SEQ.matcher(line).find();
+//            case DRUG_SUMMARY, TREATMENT_DETAIL, PRESCRIPTION -> ROW_START_SEQ_DATE.matcher(line).find();
+//        };
+//    }
+//
+//    private boolean isHeaderOrNoiseLine(String line) {
+//        // 공통 헤더/설명 제거
+//        if (line.startsWith("순번")) return true;
+//
+//        // 진료정보요약 표 헤더들
+//        if (line.contains("병·의원&약국")) return true;
+//        if (line.contains("입원(외래)일수")) return true;
+//        if (line.contains("총 진료비")) return true;
+//        if (line.contains("혜택받은 금액")) return true;
+//        if (line.contains("내가 낸 의료비")) return true;
+//        if (line.contains("(건강보험 적용분)")) return true;
+//        if (line.contains("(진료비)")) return true;
+//
+//        // 기본/세부/처방 표 헤더들
+//        if (line.contains("진료시작일")) return true;
+//        if (line.contains("주상병")) return true;
+//        if (line.contains("코드")) return true;
+//        if (line.contains("진료내역")) return true;
+//        if (line.contains("약품명")) return true;
+//        if (line.contains("성분명")) return true;
+//        if (line.contains("1회")) return true;
+//        if (line.contains("투약량")) return true;
+//        if (line.contains("투여횟수")) return true;
+//        if (line.contains("총")) return true; // "총 투약일수" 등
+//
+//        // 섹션 제목 자체
+//        if (line.contains("진료정보요약")) return true;
+//        if (line.contains("기본진료정보")) return true;
+//        if (line.contains("세부진료정보")) return true;
+//        if (line.contains("처방조제정보")) return true;
+//
+//        return false;
+//    }
+//
+//    private void flushRow(List<PdfRowRecord> out, HighlightTarget target, StringBuilder rowBuf, int pageIndex) {
+//        if (rowBuf == null || rowBuf.isEmpty()) return;
+//
+//        String row = rowBuf.toString().trim();
+//        rowBuf.setLength(0);
+//
+//        PdfRowRecord parsed = parseRowByTarget(target, row, pageIndex);
+//        if (parsed != null) out.add(parsed);
+//    }
 
     /**
      * ✅ target별 row 파싱
@@ -470,7 +492,8 @@ public class DocumentServiceImpl implements DocumentService {
     private void generateHighlightedPdf(
             List<PdfRowRecord> records,
             Path originalPdf,
-            Path outputPdf
+            Path outputPdf,
+            int condition
     ) {
         long t0 = System.currentTimeMillis();
         log.info("✅ generateHighlightedPdf START: records={}, pdf={}",
@@ -488,7 +511,12 @@ public class DocumentServiceImpl implements DocumentService {
         }
 
         try (PDDocument document = PDDocument.load(originalPdf.toFile())) {
-
+            PDFTextStripper s = new PDFTextStripper();
+            String raw = s.getText(document);
+            String norm = raw.replaceAll("\\s+", "");
+            log.info("[RAW_CHECK_PDF] file={}, contains11(0)={}",
+                    originalPdf.getFileName(),
+                    norm.contains("11(0)"));
             List<HighlightMark> marks = new ArrayList<>();
             EnumMap<HighlightType, Integer> summaryCounts = new EnumMap<>(HighlightType.class);
 
@@ -592,6 +620,10 @@ public class DocumentServiceImpl implements DocumentService {
                 }
             }
 
+            if (condition == 2 && highlightCount == 0) {
+                highlightCount += applyHospitalizationFallback(document, marks, summaryCounts);
+            }
+
             PdfOverlayRenderer renderer = new PdfOverlayRenderer(document);
             renderer.render(document, marks, summaryCounts);
 
@@ -600,7 +632,7 @@ public class DocumentServiceImpl implements DocumentService {
                     highlightCount, System.currentTimeMillis() - t0);
 
         } catch (IOException e) {
-            throw new RuntimeException("PDF 하이라이트 생성 실패", e);
+            throw new BaseException(ExceptionEnum.DOCUMENT_NOT_FOUND);
         }
     }
 
@@ -635,6 +667,19 @@ public class DocumentServiceImpl implements DocumentService {
         stripper.getText(document);
 
         String pageText = normalizedPageText.toString();
+        boolean has110 = pageText.contains("11(0)");
+        if (has110) {
+            log.info("[RAW_CHECK] pageIndex={} has11(0)=true, around='{}'",
+                    pageIndex,
+                    pageText.substring(
+                            Math.max(0, pageText.indexOf("11(0)") - 30),
+                            Math.min(pageText.length(), pageText.indexOf("11(0)") + 30)
+                    ));
+        } else {
+            log.info("[RAW_CHECK] pageIndex={} has11(0)=false, head='{}'",
+                    pageIndex,
+                    pageText.substring(0, Math.min(80, pageText.length())));
+        }
         String normalizedTarget = targetText.replaceAll("\\s+", "");
 
         List<PDRectangle> rectangles = new ArrayList<>();
@@ -732,5 +777,73 @@ public class DocumentServiceImpl implements DocumentService {
         String fileName = String.format("%s-%s-cond%d-highlighted.pdf", safeBundleKey, target.name(), condition);
 
         return dir.resolve(fileName);
+    }
+
+    private int applyHospitalizationFallback(
+            PDDocument document,
+            List<HighlightMark> marks,
+            EnumMap<HighlightType, Integer> summaryCounts
+    ) throws IOException {
+
+        log.info("[HOSP_FALLBACK] start");
+
+        int added = 0;
+        int pageCount = document.getNumberOfPages();
+
+        for (int pageIndex = 0; pageIndex < pageCount; pageIndex++) {
+            List<String> tokens = findHospitalizationTokensOnPage(document, pageIndex);
+            if (tokens.isEmpty()) continue;
+
+            String token = tokens.get(0);
+            List<PDRectangle> areas = calculateTextPositions(document, pageIndex, token);
+            if (areas == null || areas.isEmpty()) continue;
+
+            PDPage page = document.getPage(pageIndex);
+            float pageHeight = page.getMediaBox().getHeight();
+
+            for (PDRectangle rect : areas) {
+                PDRectangle bbox = addHighlightAnnotation(page, pageHeight, rect, HighlightType.HAS_HOSPITALIZATION);
+                summaryCounts.put(HighlightType.HAS_HOSPITALIZATION,
+                        summaryCounts.getOrDefault(HighlightType.HAS_HOSPITALIZATION, 0) + 1);
+                marks.add(new HighlightMark(pageIndex, HighlightType.HAS_HOSPITALIZATION, bbox));
+                added++;
+            }
+
+            log.info("[HOSP_FALLBACK] pageIndex={}, token='{}', rects={}", pageIndex, token, areas.size());
+        }
+
+        log.info("[HOSP_FALLBACK] end added={}", added);
+        return added;
+    }
+
+    private PDRectangle addHighlightAnnotation(PDPage page, float pageHeight, PDRectangle rect, HighlightType type) throws IOException {
+        float x1 = rect.getLowerLeftX();
+        float y1 = pageHeight - rect.getUpperRightY();
+        float x2 = rect.getUpperRightX();
+        float y2 = pageHeight - rect.getLowerLeftY();
+
+        PDAnnotationTextMarkup highlight =
+                new PDAnnotationTextMarkup(PDAnnotationTextMarkup.SUB_TYPE_HIGHLIGHT);
+
+        highlight.setConstantOpacity(0.3f);
+        highlight.setColor(type.getPDColor());
+
+        highlight.setQuadPoints(new float[]{
+                x1, y2,
+                x2, y2,
+                x1, y1,
+                x2, y1
+        });
+
+        PDRectangle bbox = new PDRectangle();
+        bbox.setLowerLeftX(x1);
+        bbox.setLowerLeftY(y1);
+        bbox.setUpperRightX(x2);
+        bbox.setUpperRightY(y2);
+
+        highlight.setRectangle(bbox);
+        page.getAnnotations().add(highlight);
+
+        return bbox;
     }
 }

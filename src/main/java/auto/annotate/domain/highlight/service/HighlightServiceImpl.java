@@ -3,7 +3,6 @@ package auto.annotate.domain.highlight.service;
 import auto.annotate.domain.document.dto.HighlightTarget;
 import auto.annotate.domain.document.dto.HighlightType;
 import auto.annotate.domain.document.dto.response.PdfRowRecord;
-import auto.annotate.domain.document.dto.response.VisitSummaryRecord;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
@@ -87,14 +86,26 @@ public class HighlightServiceImpl implements HighlightService {
                 hospitalKeysWith7OutpatientDays.stream().limit(5).toList());
         final Set<String> finalHospitalKeys = hospitalKeysWith7OutpatientDays;
 
-        long marked = records.stream()
+        List<PdfRowRecord> applied = records.stream()
+                .map(r -> applyRuleByCondition(r, onlyType, finalHospitalKeys))
+                .toList();
+
+        if (onlyType == HighlightType.HAS_HOSPITALIZATION) {
+            long looseCnt = applied.stream().filter(r -> r.getHighlightTypes().contains(HighlightType.HAS_HOSPITALIZATION)).count();
+            log.info("[HOSP] appliedHasHospCnt={}", looseCnt);
+
+            applied.stream()
+                    .filter(r -> r.getHighlightTypes().contains(HighlightType.HAS_HOSPITALIZATION))
+                    .limit(1)
+                    .forEach(r -> log.info("[HOSP] sampleHit={}", r));
+        }
+
+        long marked = applied.stream()
                 .filter(r -> r.getHighlightTypes().contains(onlyType))
                 .count();
         log.info("after apply: type={}, markedRows={}", onlyType, marked);
 
-        return records.stream()
-                .map(r -> applyRuleByCondition(r, onlyType, finalHospitalKeys))
-                .toList();
+        return applied;
     }
 
     private HighlightType mapConditionToType(int condition) {
@@ -127,12 +138,9 @@ public class HighlightServiceImpl implements HighlightService {
             }
 
             case HAS_HOSPITALIZATION -> {
-                // ✅ 입원은 요약에서만 판단하는 게 안전
-                if (r.getTarget() == HighlightTarget.VISIT_SUMMARY) {
-                    int inpatientDays = parseInpatientDays(r.getDaysOfStayOrVisit());
-                    if (inpatientDays > 0) {
-                        types.add(HighlightType.HAS_HOSPITALIZATION);
-                    }
+                // days 컬럼이 깨져도 전체 필드에서 "11(0)" 같은 패턴을 찾아 입원 판정
+                if (hasHospitalizationLoose(r)) {
+                    types.add(HighlightType.HAS_HOSPITALIZATION);
                 }
             }
 
@@ -142,28 +150,6 @@ public class HighlightServiceImpl implements HighlightService {
         }
 
         return r.withHighlightTypes(types);
-    }
-
-
-
-    // 기존 "전체 룰" 적용 메서드는 남겨둬도 되지만,
-    // condition별만 쓸 거면 사실상 applyRuleByCondition만 사용하면 됨.
-    private VisitSummaryRecord applyRule(VisitSummaryRecord record, Set<String> hospitalKeysWith7OutpatientDays) {
-        if (record == null) return null;
-
-        Set<HighlightType> types = new HashSet<>();
-        InOutDays d = parseInOutDays(record.getDaysOfStayOrVisit());
-
-        if (d.inpatient > 0) {
-            types.add(HighlightType.HAS_HOSPITALIZATION);
-        }
-
-        String key = normalizeInstitutionKey(record.getInstitutionName());
-        if (!key.isEmpty() && hospitalKeysWith7OutpatientDays.contains(key)) {
-            types.add(HighlightType.VISIT_OVER_7_DAYS);
-        }
-
-        return types.isEmpty() ? record : record.withHighlightTypes(types);
     }
 
     private Set<String> findHospitalKeysWith7OutpatientDays(List<PdfRowRecord> records) {
@@ -243,4 +229,24 @@ public class HighlightServiceImpl implements HighlightService {
             return 0;
         }
     }
+
+    // ✅ PdfRowRecord 전체 문자열에서 "입원(외래)일수" 패턴을 찾아 입원 여부 판단
+    private boolean hasHospitalizationLoose(PdfRowRecord r) {
+        if (r.getTarget() != HighlightTarget.VISIT_SUMMARY) return false;
+
+        // ✅ 레코드 전체를 문자열로 덤프 (필드 어디에 있든 잡기)
+        String blob = String.valueOf(r).replaceAll("\\s+", "");
+
+        Matcher m = Pattern.compile("(\\d+)\\((\\d+)\\)").matcher(blob);
+        while (m.find()) {
+            int inpatient = safeParseInt(m.group(1));
+            if (inpatient > 0) return true;
+        }
+        return false;
+    }
+
+    private String safe(String s) {
+        return s == null ? "" : s;
+    }
+
 }
