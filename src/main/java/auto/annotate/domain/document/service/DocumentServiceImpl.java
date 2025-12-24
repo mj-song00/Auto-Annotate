@@ -94,7 +94,6 @@ public class DocumentServiceImpl implements DocumentService {
     }
 
 
-
     /**
      * GET /document/{id}/highlighted
      * 사용자가 요청할 때 하이라이트 PDF를 생성(캐시)하고 Resource로 반환
@@ -127,7 +126,7 @@ public class DocumentServiceImpl implements DocumentService {
                 .filter(r -> r.getHighlightTypes() != null && !r.getHighlightTypes().isEmpty())
                 .count();
         log.info("before generate: bundleKey={}, targetToRender={}, condition={}, markedRows={}",
-                bundleKey, targetToRender, condition,  marked);
+                bundleKey, targetToRender, condition, marked);
 
         Path out = resolveHighlightedOutputPath(bundleKey, targetToRender, condition);
         generateHighlightedPdf(highlightedRecords, originalPdfPath, out, condition);
@@ -154,7 +153,11 @@ public class DocumentServiceImpl implements DocumentService {
     }
 
     private int safeParseInt(String v) {
-        try { return Integer.parseInt(v); } catch (Exception e) { return 0; }
+        try {
+            return Integer.parseInt(v);
+        } catch (Exception e) {
+            return 0;
+        }
     }
 
     @Override
@@ -187,7 +190,6 @@ public class DocumentServiceImpl implements DocumentService {
 //        }
 //        return applied;
 //    }
-
     private HighlightType mapConditionToType(int condition) {
         // 너의 condition 매핑 규칙에 맞게 수정
         return switch (condition) {
@@ -486,6 +488,7 @@ public class DocumentServiceImpl implements DocumentService {
         if (fromInclusive >= toExclusive) return "";
         return String.join(" ", tokens.subList(fromInclusive, toExclusive));
     }
+
     /**
      * PDF 생성 + 조건별 하이라이트 적용
      */
@@ -548,6 +551,11 @@ public class DocumentServiceImpl implements DocumentService {
                     if (types == null || types.isEmpty()) continue;
 
                     for (HighlightType type : types) {
+
+                        if (type == HighlightType.HAS_SURGERY) {
+                            log.info("[SURGERY] page={}, text={}", pageIndex, record.getTreatmentDetail());
+                        }
+
                         if (type == HighlightType.HAS_HOSPITALIZATION) {
                             log.info("HOSP DEBUG pageIndex={}, days='{}', inst='{}', detail='{}'",
                                     pageIndex,
@@ -564,8 +572,16 @@ public class DocumentServiceImpl implements DocumentService {
                             case HAS_HOSPITALIZATION -> record.getDaysOfStayOrVisit();
 
                             // TODO: 수술/30일약은 지금처럼 treatmentDetail을 쓰든, 해당 문서 타입에 맞게 바꿔야 함
-                            case HAS_SURGERY, MONTH_30_DRUG -> record.getTreatmentDetail();
+                            case HAS_SURGERY -> extractSurgeryToken(record.getTreatmentDetail());
+
+                            case MONTH_30_DRUG -> record.getTreatmentDetail();
                         };
+
+                        if (type == HighlightType.HAS_SURGERY) {
+                            log.info("[SURGERY_TARGET] page={}, rawTarget='{}'",
+                                    pageIndex, rawTarget);
+                        }
+
                         if (rawTarget == null) continue;
 
                         String targetText = rawTarget.trim();
@@ -593,7 +609,7 @@ public class DocumentServiceImpl implements DocumentService {
                             PDAnnotationTextMarkup highlight =
                                     new PDAnnotationTextMarkup(PDAnnotationTextMarkup.SUB_TYPE_HIGHLIGHT);
 
-                            highlight.setConstantOpacity(0.3f);
+                            highlight.setConstantOpacity(0.9f);
                             highlight.setColor(type.getPDColor());
 
                             highlight.setQuadPoints(new float[]{
@@ -615,6 +631,13 @@ public class DocumentServiceImpl implements DocumentService {
 
                             summaryCounts.put(type, summaryCounts.getOrDefault(type, 0) + 1);
                             marks.add(new HighlightMark(pageIndex, type, bbox));
+
+                            if (type == HighlightType.HAS_SURGERY) {
+                                log.info("[SURGERY_BBOX] page={}, bbox=({}, {}, {}, {})",
+                                        pageIndex,
+                                        bbox.getLowerLeftX(), bbox.getLowerLeftY(),
+                                        bbox.getWidth(), bbox.getHeight());
+                            }
                         }
                     }
                 }
@@ -747,14 +770,37 @@ public class DocumentServiceImpl implements DocumentService {
                 String pageText = stripper.getText(document);
                 String[] lines = pageText.split("\\r?\\n");
 
-                for (String line : lines) {
-                    String row = line.trim();
-                    if (row.isEmpty()) continue;
+                // ✅ VISIT_SUMMARY는 기존처럼 한 줄 단위 파싱
+                if (target == HighlightTarget.VISIT_SUMMARY) {
+                    for (String line : lines) {
+                        String row = line.trim();
+                        if (row.isEmpty()) continue;
 
-                    // ✅ 너가 이미 만든 target별 파서 사용
-                    PdfRowRecord parsed = parseRowByTarget(target, row, pageIndex);
-                    if (parsed != null) rows.add(parsed);
+                        PdfRowRecord parsed = parseRowByTarget(target, row, pageIndex);
+                        if (parsed != null) rows.add(parsed);
+                    }
+                    continue;
                 }
+
+                // ✅ 나머지: "순번 + 날짜" 시작을 기준으로 여러 줄을 합쳐 한 행(row) 만들기
+                StringBuilder buf = new StringBuilder();
+
+                for (String rawLine : lines) {
+                    String line = rawLine == null ? "" : rawLine.trim();
+                    if (line.isEmpty()) continue;
+
+                    boolean isNewRow = ROW_START_SEQ_DATE.matcher(line).find();
+
+                    if (isNewRow) {
+                        flushBufferedRow(rows, target, buf, pageIndex);
+                        buf.append(line);
+                    } else {
+                        if (!buf.isEmpty()) buf.append(" ");
+                        buf.append(line);
+                    }
+                }
+
+                flushBufferedRow(rows, target, buf, pageIndex);
             }
 
             return rows;
@@ -825,7 +871,7 @@ public class DocumentServiceImpl implements DocumentService {
         PDAnnotationTextMarkup highlight =
                 new PDAnnotationTextMarkup(PDAnnotationTextMarkup.SUB_TYPE_HIGHLIGHT);
 
-        highlight.setConstantOpacity(0.3f);
+        highlight.setConstantOpacity(0.95f);
         highlight.setColor(type.getPDColor());
 
         highlight.setQuadPoints(new float[]{
@@ -845,5 +891,48 @@ public class DocumentServiceImpl implements DocumentService {
         page.getAnnotations().add(highlight);
 
         return bbox;
+    }
+
+    private void flushBufferedRow(List<PdfRowRecord> rows, HighlightTarget target, StringBuilder buf, int pageIndex) {
+        if (buf == null || buf.isEmpty()) return;
+
+        String row = buf.toString().trim();
+        buf.setLength(0);
+
+        PdfRowRecord parsed = parseRowByTarget(target, row, pageIndex);
+        if (parsed != null) rows.add(parsed);
+    }
+
+//    private static final Pattern SURGERY_TOKEN =
+//            Pattern.compile("([가-힣A-Za-z0-9\\[\\]\\(\\)\\/\\-]{2,}수술)(?=\\d|$)");
+
+    private String extractSurgeryToken(String rowText) {
+        log.info("[EXTRACT_IMPL] SIMPLE_LAST_SURGERY");
+
+        if (rowText == null) return null;
+        String s = rowText.replaceAll("\\s+", "");
+
+        if (s.contains("수술후처치") || s.contains("단순처치")) return null;
+
+        int idx = s.lastIndexOf("수술");
+        if (idx < 0) return null;
+
+        // "수술" 앞의 12글자 정도만 가져오자(대부분 '...근치수술' 같은 길이)
+        int start = Math.max(0, idx - 12);
+        String token = s.substring(start, idx + 2);
+
+// 괄호 제거
+        token = token.replaceAll("[\\(\\)]", "");
+
+// 분류어 제거 (매칭 실패 방지)
+        token = token.replace("양방", "")
+                .replace("한방", "")
+                .replace("치과", "");
+
+// 앞뒤 정리
+        token = token.replaceAll("^[/\\-]+", "");
+
+        log.info("[EXTRACT_SURGERY_TOKEN] token='{}'", token);
+        return token;
     }
 }

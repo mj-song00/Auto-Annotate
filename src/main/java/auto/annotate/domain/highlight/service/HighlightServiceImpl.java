@@ -16,50 +16,50 @@ import java.util.stream.Collectors;
 @Slf4j
 @RequiredArgsConstructor
 public class HighlightServiceImpl implements HighlightService {
+//
+//    private static final java.util.regex.Pattern IN_OUT_PATTERN =
+//            java.util.regex.Pattern.compile("^(\\d+)\\((\\d+)\\)$");
 
-    private static final java.util.regex.Pattern IN_OUT_PATTERN =
-            java.util.regex.Pattern.compile("^(\\d+)\\((\\d+)\\)$");
-
-    private static class InOutDays {
-        final int inpatient;   // 입원
-        final int outpatient;  // 외래(내원)
-        InOutDays(int inpatient, int outpatient) {
-            this.inpatient = inpatient;
-            this.outpatient = outpatient;
-        }
-    }
-
-    private InOutDays parseInOutDays(String raw) {
-        if (raw == null) return new InOutDays(0, 0);
-        String v = raw.replaceAll("\\s+", "");
-
-        var m = IN_OUT_PATTERN.matcher(v);
-        if (m.find()) {
-            return new InOutDays(Integer.parseInt(m.group(1)), Integer.parseInt(m.group(2)));
-        }
-
-        // "11"처럼 괄호 없이 나오면 입원으로 취급(정책은 필요하면 바꿔)
-        try {
-            return new InOutDays(Integer.parseInt(v), 0);
-        } catch (Exception e) {
-            return new InOutDays(0, 0);
-        }
-    }
+//    private static class InOutDays {
+//        final int inpatient;   // 입원
+//        final int outpatient;  // 외래(내원)
+//        InOutDays(int inpatient, int outpatient) {
+//            this.inpatient = inpatient;
+//            this.outpatient = outpatient;
+//        }
+//    }
+//
+//    private InOutDays parseInOutDays(String raw) {
+//        if (raw == null) return new InOutDays(0, 0);
+//        String v = raw.replaceAll("\\s+", "");
+//
+//        var m = IN_OUT_PATTERN.matcher(v);
+//        if (m.find()) {
+//            return new InOutDays(Integer.parseInt(m.group(1)), Integer.parseInt(m.group(2)));
+//        }
+//
+//        // "11"처럼 괄호 없이 나오면 입원으로 취급(정책은 필요하면 바꿔)
+//        try {
+//            return new InOutDays(Integer.parseInt(v), 0);
+//        } catch (Exception e) {
+//            return new InOutDays(0, 0);
+//        }
+//    }
 
     /**
      * ✅ 병원명 정규화 (aggregation key 용도)
      */
-    private String normalizeInstitutionKey(String raw) {
-        if (raw == null) return "";
-        String s = raw;
-
-        s = s.replaceAll("[\\r\\n\\t]+", " ");
-        s = s.replaceAll("[·•∙⋅]", " ");
-        s = s.replaceAll("\\s{2,}", " ").trim();
-
-        // ✅ 키는 공백 제거
-        return s.replace(" ", "");
-    }
+//    private String normalizeInstitutionKey(String raw) {
+//        if (raw == null) return "";
+//        String s = raw;
+//
+//        s = s.replaceAll("[\\r\\n\\t]+", " ");
+//        s = s.replaceAll("[·•∙⋅]", " ");
+//        s = s.replaceAll("\\s{2,}", " ").trim();
+//
+//        // ✅ 키는 공백 제거
+//        return s.replace(" ", "");
+//    }
 
     /** 약국 제외 */
     private boolean isPharmacy(String institutionName) {
@@ -127,6 +127,19 @@ public class HighlightServiceImpl implements HighlightService {
             HighlightType onlyType,
             Set<String> hospitalKeysWith7OutpatientDays
     ) {
+        log.info("[RULE] onlyType={}, target={}, page={}, head={}",
+                onlyType, r.getTarget(), r.getPageIndex(),
+                (r.getTreatmentDetail() == null ? "null" :
+                        r.getTreatmentDetail().substring(0, Math.min(40, r.getTreatmentDetail().length())))
+        );
+
+        if (onlyType == HighlightType.HAS_SURGERY) {
+            String norm = String.valueOf(r.getTreatmentDetail()).replaceAll("\\s+","");
+            if (norm.contains("수술")) {
+                log.info("[SOOL_ROW_SAMPLE] {}", norm);
+            }
+        }
+
         Set<HighlightType> types = new HashSet<>(r.getHighlightTypes());
 
         switch (onlyType) {
@@ -138,9 +151,30 @@ public class HighlightServiceImpl implements HighlightService {
             }
 
             case HAS_HOSPITALIZATION -> {
-                // days 컬럼이 깨져도 전체 필드에서 "11(0)" 같은 패턴을 찾아 입원 판정
-                if (hasHospitalizationLoose(r)) {
-                    types.add(HighlightType.HAS_HOSPITALIZATION);
+                String norm = String.valueOf(r.getTreatmentDetail()).replaceAll("\\s+", "");
+                boolean contains = norm.contains("수술");
+                boolean hit = hasRealSurgeryToken(r.getTreatmentDetail());
+
+                log.info("[SURGERY_RULE] page={}, target={}, containsSool={}, hitToken={}, normSample={}",
+                        r.getPageIndex(), r.getTarget(), contains, hit,
+                        norm.substring(0, Math.min(80, norm.length()))
+                );
+
+
+                if (r.getTarget() == HighlightTarget.TREATMENT_DETAIL && hit) {
+                    types.add(HighlightType.HAS_SURGERY);
+                }
+            }
+
+            case HAS_SURGERY -> {
+                String norm = String.valueOf(r.getTreatmentDetail()).replaceAll("\\s+", "");
+                boolean hit = hasRealSurgeryToken(r.getTreatmentDetail());
+                if (norm.contains("수술")) {
+                    log.info("[SURGERY_HITCHECK] hit={}, norm={}", hit, norm);
+                }
+
+                if (r.getTarget() == HighlightTarget.TREATMENT_DETAIL && hit) {
+                    types.add(HighlightType.HAS_SURGERY);
                 }
             }
 
@@ -245,8 +279,36 @@ public class HighlightServiceImpl implements HighlightService {
         return false;
     }
 
-    private String safe(String s) {
-        return s == null ? "" : s;
+//    private String safe(String s) {
+//        return s == null ? "" : s;
+//    }
+
+    private boolean isSurgeryByCodeName(String codeName) {
+        if (codeName == null) return false;
+        String s = codeName.replaceAll("\\s+", "");
+
+        // 수술로 치면 안 되는 것(너가 발견한 반례)
+        if (s.contains("수술후처치") || s.contains("단순처치")) return false;
+
+        // 진짜 수술: 보수적으로는 endsWith 추천
+        return s.endsWith("수술");
+        // 또는 좀 더 넓게: return s.contains("수술");
     }
 
+    // "…수술"로 끝나는 토큰을 잡아내기 위한 패턴
+    private static final Pattern REAL_SURGERY_TOKEN =
+            Pattern.compile("([가-힣A-Za-z0-9\\[\\]\\/\\-]{2,}수술)(?=\\d|$)");
+
+    private boolean hasRealSurgeryToken(String rowText) {
+        if (rowText == null) return false;
+
+        String s = rowText.replaceAll("\\s+", ""); // 줄바꿈/공백 제거
+
+        // ❌ 오탐 대표 케이스 제외
+        if (s.contains("수술후처치")) return false;
+        if (s.contains("단순처치")) return false;
+
+        // ✅ "…수술" 토큰이 있으면 true
+        return REAL_SURGERY_TOKEN.matcher(s).find();
+    }
 }

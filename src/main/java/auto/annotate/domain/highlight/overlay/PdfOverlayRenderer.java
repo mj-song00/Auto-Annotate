@@ -31,14 +31,24 @@ public class PdfOverlayRenderer {
         }
     }
 
-    public void render(
-            PDDocument document,
-            List<HighlightMark> marks,
-            Map<HighlightType, Integer> summaryCounts
-    ) throws IOException {
+    public void render(PDDocument document,
+                       List<HighlightMark> marks,
+                       Map<HighlightType, Integer> summaryCounts) throws IOException {
 
         List<HighlightMark> safeMarks = (marks == null) ? Collections.emptyList() : marks;
 
+        // ✅ 1) 요약은 무조건 0페이지에 찍기 (marks 유무와 무관)
+        PDPage firstPage = document.getPage(0);
+        PDRectangle firstMb = firstPage.getMediaBox();
+        try (PDPageContentStream cs = new PDPageContentStream(
+                document, firstPage,
+                PDPageContentStream.AppendMode.APPEND,
+                true, true
+        )) {
+            drawSummaryBox(cs, firstMb, summaryCounts);
+        }
+
+        // ✅ 2) marks 있는 페이지만 탭/마진바 그리기
         Map<Integer, List<HighlightMark>> marksByPage = safeMarks.stream()
                 .collect(Collectors.groupingBy(m -> m.pageIndex));
 
@@ -50,18 +60,10 @@ public class PdfOverlayRenderer {
             PDRectangle mb = page.getMediaBox();
 
             try (PDPageContentStream cs = new PDPageContentStream(
-                    document,
-                    page,
+                    document, page,
                     PDPageContentStream.AppendMode.APPEND,
-                    true,
-                    true
+                    true, true
             )) {
-                // ✅ 1) 요약 박스: PDF 전체 요약을 1페이지(0)에만
-                if (pageIndex == 0) {
-                    drawSummaryBox(cs, mb, summaryCounts);
-                }
-
-                // ✅ 2) 페이지 탭/마진바는 "이 페이지 marks" 기준
                 Map<HighlightType, Integer> pageCounts = countByTypeFromMarks(pageMarks);
 
                 Set<HighlightType> typesPresent = pageCounts.entrySet().stream()
@@ -74,6 +76,7 @@ public class PdfOverlayRenderer {
             }
         }
     }
+
 
     // ✅ marks 기준 카운트 (페이지 탭용)
     private Map<HighlightType, Integer> countByTypeFromMarks(List<HighlightMark> pageMarks) {
