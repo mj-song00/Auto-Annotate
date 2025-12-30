@@ -47,8 +47,8 @@ dependencies {
         exclude group: 'org.slf4j', module: 'slf4j-simple'
     }
 
-    //PDF
-    implementation 'org.apache.pdfbox:pdfbox:2.0.30'
+    // Excel
+    implementation("org.apache.poi:poi-ooxml:5.4.1")
 }
 
 tasks.named('test') {
