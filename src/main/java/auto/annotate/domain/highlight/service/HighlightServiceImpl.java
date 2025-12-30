@@ -8,14 +8,18 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 
 import java.util.*;
-import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 import java.util.stream.Collectors;
+
+import static auto.annotate.common.utils.HospitalKeyUtils.isPharmacy;
+import static auto.annotate.common.utils.HospitalKeyUtils.parseTotalDays;
 
 @Service
 @Slf4j
 @RequiredArgsConstructor
 public class HighlightServiceImpl implements HighlightService {
+
+    // todo : 현재 사용되지 않아 주석처리된 메서드 정리
 //
 //    private static final java.util.regex.Pattern IN_OUT_PATTERN =
 //            java.util.regex.Pattern.compile("^(\\d+)\\((\\d+)\\)$");
@@ -45,28 +49,6 @@ public class HighlightServiceImpl implements HighlightService {
 //            return new InOutDays(0, 0);
 //        }
 //    }
-
-    /**
-     * ✅ 병원명 정규화 (aggregation key 용도)
-     */
-//    private String normalizeInstitutionKey(String raw) {
-//        if (raw == null) return "";
-//        String s = raw;
-//
-//        s = s.replaceAll("[\\r\\n\\t]+", " ");
-//        s = s.replaceAll("[·•∙⋅]", " ");
-//        s = s.replaceAll("\\s{2,}", " ").trim();
-//
-//        // ✅ 키는 공백 제거
-//        return s.replace(" ", "");
-//    }
-
-    /** 약국 제외 */
-    private boolean isPharmacy(String institutionName) {
-        if (institutionName == null) return false;
-        String s = institutionName.replaceAll("\\s+", "");
-        return s.contains("약국");
-    }
 
     @Override
     public List<PdfRowRecord> applyHighlights(List<PdfRowRecord> records, int condition) {
@@ -225,59 +207,33 @@ public class HighlightServiceImpl implements HighlightService {
         return s.toLowerCase();
     }
 
-    /** 예: "11(0)" -> 11, "0(8)" -> 8, "3(5)" -> 8, "7" -> 7 */
-    private int parseTotalDays(String daysOfStayOrVisit) {
-        if (daysOfStayOrVisit == null) return 0;
-        String s = daysOfStayOrVisit.trim();
 
-        Matcher m = Pattern.compile("^(\\d+)\\((\\d+)\\)$").matcher(s);
-        if (m.find()) {
-            int inDays = safeParseInt(m.group(1));
-            int outDays = safeParseInt(m.group(2));
-            return inDays + outDays;
-        }
 
-        Matcher m2 = Pattern.compile("^(\\d+)$").matcher(s);
-        if (m2.find()) {
-            return safeParseInt(m2.group(1));
-        }
-
-        return 0;
-    }
-
-    private int parseInpatientDays(String s) {
-        if (s == null) return 0;
-        s = s.trim();
-
-        var m = java.util.regex.Pattern.compile("^(\\d+)\\((\\d+)\\)$").matcher(s);
-        if (m.find()) {
-            return safeParseInt(m.group(1)); // 괄호 앞 = 입원일수
-        }
-        return 0;
-    }
-
-    private int safeParseInt(String v) {
-        try {
-            return Integer.parseInt(v);
-        } catch (Exception e) {
-            return 0;
-        }
-    }
+//    private int parseInpatientDays(String s) {
+//        if (s == null) return 0;
+//        s = s.trim();
+//
+//        var m = java.util.regex.Pattern.compile("^(\\d+)\\((\\d+)\\)$").matcher(s);
+//        if (m.find()) {
+//            return safeParseInt(m.group(1)); // 괄호 앞 = 입원일수
+//        }
+//        return 0;
+//    }
 
     // ✅ PdfRowRecord 전체 문자열에서 "입원(외래)일수" 패턴을 찾아 입원 여부 판단
-    private boolean hasHospitalizationLoose(PdfRowRecord r) {
-        if (r.getTarget() != HighlightTarget.VISIT_SUMMARY) return false;
-
-        // ✅ 레코드 전체를 문자열로 덤프 (필드 어디에 있든 잡기)
-        String blob = String.valueOf(r).replaceAll("\\s+", "");
-
-        Matcher m = Pattern.compile("(\\d+)\\((\\d+)\\)").matcher(blob);
-        while (m.find()) {
-            int inpatient = safeParseInt(m.group(1));
-            if (inpatient > 0) return true;
-        }
-        return false;
-    }
+//    private boolean hasHospitalizationLoose(PdfRowRecord r) {
+//        if (r.getTarget() != HighlightTarget.VISIT_SUMMARY) return false;
+//
+//        // ✅ 레코드 전체를 문자열로 덤프 (필드 어디에 있든 잡기)
+//        String blob = String.valueOf(r).replaceAll("\\s+", "");
+//
+//        Matcher m = Pattern.compile("(\\d+)\\((\\d+)\\)").matcher(blob);
+//        while (m.find()) {
+//            int inpatient = safeParseInt(m.group(1));
+//            if (inpatient > 0) return true;
+//        }
+//        return false;
+//    }
 
 //    private String safe(String s) {
 //        return s == null ? "" : s;

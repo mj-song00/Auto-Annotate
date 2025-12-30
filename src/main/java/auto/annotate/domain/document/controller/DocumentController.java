@@ -9,17 +9,14 @@ import auto.annotate.domain.document.repository.DocumentRepository;
 import auto.annotate.domain.document.service.DocumentService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
-import org.springframework.core.io.FileSystemResource;
 import org.springframework.core.io.Resource;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
-
 import org.springframework.web.bind.annotation.*;
 import org.springframework.web.multipart.MultipartFile;
 
-import java.nio.file.Files;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -88,15 +85,21 @@ public class DocumentController {
                 .toList();
     }
 
-//    @GetMapping("/document/{documentId}/highlighted")
-//    public ResponseEntity<Resource> getHighlighted(
-//            @PathVariable UUID documentId,
-//            @RequestParam int condition
-//    ) {
-//        Resource resource = documentService.loadHighlightedByBundle(documentId, condition);
-//        return ResponseEntity.ok()
-//                .contentType(MediaType.APPLICATION_PDF)
-//                .header(HttpHeaders.CONTENT_DISPOSITION, "inline; filename=\"highlighted.pdf\"")
-//                .body(resource);
-//    }
+    @GetMapping("/{documentId}/excel")
+    public ResponseEntity<Resource> downloadVisitOver7DaysExcel(
+            @PathVariable UUID documentId,
+            @RequestParam int condition
+    ) {
+        Resource excel = documentService.downloadExcelByCondition(documentId, condition);
+
+        return ResponseEntity.ok()
+                .contentType(MediaType.parseMediaType(
+                        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+                ))
+                .header(HttpHeaders.CONTENT_DISPOSITION,
+                        "attachment; filename=\"" + excel.getFilename() + "\"")
+                .header(HttpHeaders.CACHE_CONTROL, "no-store, no-cache, must-revalidate, max-age=0")
+                .header(HttpHeaders.PRAGMA, "no-cache")
+                .body(excel);
+    }
 }

@@ -14,10 +14,17 @@
 <body>
 <h1>PDF 미리보기</h1>
 
-<button id="btn0" type="button" disabled onclick="window.openPdfModal(0)">동일 병원 7일 이상</button>
-<button id="btn1" type="button" disabled onclick="window.openPdfModal(1)">30일 초과 약제</button>
-<button id="btn2" type="button" disabled onclick="window.openPdfModal(2)">입원</button>
-<button id="btn3" type="button" disabled onclick="window.openPdfModal(3)">수술</button>
+<!-- ✅ 미리보기 버튼: 기존대로 PDF 모달을 연다 -->
+<button id="btn0" type="button" disabled onclick="window.openPdfModal(0)">동일 병원 7일 이상 (미리보기)</button>
+<button id="btn1" type="button" disabled onclick="window.openPdfModal(1)">30일 초과 약제 (미리보기)</button>
+<button id="btn2" type="button" disabled onclick="window.openPdfModal(2)">입원 (미리보기)</button>
+<button id="btn3" type="button" disabled onclick="window.openPdfModal(3)">수술 (미리보기)</button>
+
+<!-- ✅ 다운로드 버튼: 바로 엑셀 다운로드 -->
+<button id="dl0" type="button" disabled onclick="window.downloadExcel(0)">동일 병원 7일 이상 (엑셀)</button>
+<button id="dl1" type="button" disabled onclick="window.downloadExcel(1)">30일 초과 약제 (엑셀)</button>
+<button id="dl2" type="button" disabled onclick="window.downloadExcel(2)">입원 (엑셀)</button>
+<button id="dl3" type="button" disabled onclick="window.downloadExcel(3)">수술 (엑셀)</button>
 
 <div id="pdfModal"
      style="display:none; position:fixed; top:10%; left:10%; width:80%; height:80%;
@@ -31,7 +38,8 @@
     </div>
 
     <div style="margin-top:10px;">
-        <button onclick="downloadPdf()">다운로드</button>
+        <!-- ✅ PDF 파일 다운로드 (기존 기능 유지) -->
+        <button onclick="downloadPdf()">PDF 다운로드</button>
         <button onclick="closePdfModal()">닫기</button>
     </div>
 </div>
@@ -62,7 +70,7 @@
         const modal = document.getElementById("pdfModal");
 
         function setButtonsEnabled(enabled) {
-            ["btn0","btn1","btn2","btn3"].forEach(id => {
+            ["btn0","btn1","btn2","btn3","dl0","dl1","dl2","dl3"].forEach(id => {
                 const el = document.getElementById(id);
                 if (el) el.disabled = !enabled;
             });
@@ -136,6 +144,7 @@
             queueRenderPage(pageNum);
         });
 
+        // ✅ PDF 미리보기: 기존 highlighted 엔드포인트를 그대로 호출해야 한다!
         window.openPdfModal = function (conditionNo) {
             console.log("openPdfModal:", conditionNo, "documentId=", documentId);
 
@@ -144,8 +153,8 @@
             resetViewerState();
             modal.style.display = "block";
 
-            const url = `/document/${documentId}/highlighted?condition=${conditionNo}&download=false&t=${Date.now()}`;
-            console.log("요청 URL:", url);
+            const url = `/document/${documentId}/highlighted?condition=${conditionNo}&t=${Date.now()}`;
+            console.log("요청 URL(PDF):", url);
 
             fetch(url, { cache: "no-store" })
                 .then(async (res) => {
@@ -175,9 +184,20 @@
                 .catch(err => console.error("PDF 로드 실패:", err));
         };
 
+        // ✅ PDF 다운로드: 기존 유지
         window.downloadPdf = function () {
             if (!documentId || currentConditionNo === null) return;
             const url = `/document/${documentId}/highlighted?condition=${currentConditionNo}&download=true&t=${Date.now()}`;
+            window.location.href = url;
+        };
+
+        // ✅ 엑셀 다운로드: fetch 쓰지 말고 location 이동(브라우저 다운로드 트리거)
+        window.downloadExcel = function (conditionNo) {
+            if (!documentId) return;
+
+            const url = `/document/${documentId}/excel?condition=${conditionNo}&t=${Date.now()}`;
+            console.log("요청 URL(EXCEL):", url);
+
             window.location.href = url;
         };
 
