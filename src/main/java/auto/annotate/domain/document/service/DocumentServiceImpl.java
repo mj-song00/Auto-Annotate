@@ -2,6 +2,7 @@ package auto.annotate.domain.document.service;
 
 import auto.annotate.common.exception.BaseException;
 import auto.annotate.common.exception.ExceptionEnum;
+import auto.annotate.common.utils.SurgeryTokenMatcher;
 import auto.annotate.domain.document.dto.HighlightTarget;
 import auto.annotate.domain.document.dto.HighlightType;
 import auto.annotate.domain.document.dto.response.PdfRowRecord;
@@ -18,11 +19,9 @@ import org.apache.pdfbox.pdmodel.common.PDRectangle;
 import org.apache.pdfbox.pdmodel.interactive.annotation.PDAnnotationTextMarkup;
 import org.apache.pdfbox.text.PDFTextStripper;
 import org.apache.pdfbox.text.TextPosition;
-import org.apache.poi.ss.usermodel.Cell;
 import org.apache.poi.ss.usermodel.Row;
 import org.apache.poi.ss.usermodel.Sheet;
 import org.apache.poi.ss.usermodel.Workbook;
-import org.apache.poi.ss.util.CellRangeAddress;
 import org.apache.poi.xssf.usermodel.XSSFWorkbook;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.core.io.FileSystemResource;
@@ -39,7 +38,8 @@ import java.util.*;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
-import static auto.annotate.common.utils.HospitalKeyUtils.*;
+import static auto.annotate.common.utils.HospitalKeyUtils.findHospitalKeysWith7Days;
+import static auto.annotate.common.utils.HospitalKeyUtils.normalizeHospitalKey;
 
 
 @Service
@@ -48,7 +48,7 @@ import static auto.annotate.common.utils.HospitalKeyUtils.*;
 public class DocumentServiceImpl implements DocumentService {
     private final DocumentRepository documentRepository;
     private final HighlightService highlightService;
-
+    private final SurgeryTokenMatcher surgeryTokenMatcher;
 
     @Value("${pdf.file.upload-dir}")
     private String uploadDir;
@@ -170,16 +170,6 @@ public class DocumentServiceImpl implements DocumentService {
         }
     }
 
-//    @Override
-//    public Resource loadHighlightedByBundle(UUID documentIdy, int condition) {
-//        HighlightType type = mapConditionToType(condition);
-//        HighlightTarget needed = type.getTarget();
-//
-//        Document doc = documentRepository.findFirstByBundleKeyAndTarget(documentIdy, needed)
-//                .orElseThrow(() -> new BaseException(ExceptionEnum.DOCUMENT_NOT_FOUND));
-//
-//        return loadHighlightedFileAsResource(doc.getId(), condition);
-//    }
 
     @Override
     public Resource downloadExcelByCondition(UUID documentId, int condition) {
@@ -248,9 +238,7 @@ public class DocumentServiceImpl implements DocumentService {
         List<PdfRowRecord> rows = parseSurgeryPdf(originalPdfPath);
 
         List<PdfRowRecord> hits = rows.stream()
-                .filter(r -> safe(r.getCodeName()).contains("수술"))  // ✅ 핵심
-                .sorted(Comparator.comparingInt(PdfRowRecord::getPageIndex)
-                        .thenComparing(r -> safe(r.getInstitutionName())))
+                .filter(r ->surgeryTokenMatcher.hasRealSurgeryToken(r.getCodeName()))
                 .toList();
 
         Path out = resolveExcelOutputPath(bundleKey, "surgery");
@@ -259,9 +247,14 @@ public class DocumentServiceImpl implements DocumentService {
         return new FileSystemResource(out);
     }
 
-    private static final Pattern SURGERY_ROW = Pattern.compile(
-            "^(\\d+)\\s+(\\d{4}-\\d{2}-\\d{2})\\s+(.+?)\\s+(.+?)\\s+(.+?)\\s+(.+?)\\s+(.+?)\\s*$"
-    );
+    private static final Pattern SURGERY_ROW_START =
+            Pattern.compile("^(\\d+)\\s+(\\d{4}-\\d{2}-\\d{2})\\s+(.+)$");
+
+
+    private static final Pattern TRAILING_3_NUMS =
+            Pattern.compile("(\\d+)\\s+(\\d+)\\s+(\\d+)\\s*$"); // 1회투약량, 1회투여횟수, 총투약일수(샘플 기준)
+
+
 
     private List<PdfRowRecord> parseSurgeryPdf(Path pdfPath) {
         List<PdfRowRecord> out = new ArrayList<>();
@@ -277,40 +270,105 @@ public class DocumentServiceImpl implements DocumentService {
                 String text = stripper.getText(doc);
                 String[] lines = text.split("\\r?\\n");
 
+                StringBuilder block = new StringBuilder();
+                boolean inBlock = false;
+
                 for (String raw : lines) {
                     String line = (raw == null) ? "" : raw.trim();
                     if (line.isEmpty()) continue;
 
-                    // 헤더 스킵
+                    // 헤더 스킵(필요한 만큼 추가)
                     if (line.startsWith("순번")) continue;
                     if (line.contains("진료시작일") && line.contains("코드명")) continue;
 
-                    Matcher m = SURGERY_ROW.matcher(line);
-                    if (!m.find()) continue;
+                    Matcher start = SURGERY_ROW_START.matcher(line);
+                    if (start.find()) {
+                        // 새 행 시작 -> 이전 블록 flush
+                        if (inBlock) {
+                            PdfRowRecord r = parseSurgeryBlock(block.toString(), pageIndex);
+                            if (r != null) out.add(r);
+                            block.setLength(0);
+                        }
+                        inBlock = true;
+                        block.append(line);
+                    } else if (inBlock) {
+                        // 같은 행의 이어진 줄
+                        block.append(" ").append(line);
+                    }
+                }
 
-                    PdfRowRecord r = PdfRowRecord.builder()
-                            .pageIndex(pageIndex)
-                            .target(HighlightTarget.TREATMENT_DETAIL)
-                            .rawLine(line)
-
-                            .sequence(m.group(1).trim())
-                            .treatmentStartDate(m.group(2).trim())
-                            .institutionName(m.group(3).trim())
-                            .treatmentItem(m.group(4).trim())
-                            .codeName(m.group(5).trim())
-                            .dosePerOnce(m.group(6).trim())
-                            .timesPerDay(m.group(7).trim())
-                            // totalDays가 마지막 컬럼이면 group(8)이 필요함 → 정규식/그룹 맞춰야 함
-                            .build();
-
-                    out.add(r);
+                // 페이지 끝에서 마지막 블록 flush
+                if (inBlock && block.length() > 0) {
+                    PdfRowRecord r = parseSurgeryBlock(block.toString(), pageIndex);
+                    if (r != null) out.add(r);
                 }
             }
+
             return out;
 
         } catch (IOException e) {
             throw new BaseException(ExceptionEnum.FILE_READ_ERROR);
         }
+    }
+
+    private PdfRowRecord parseSurgeryBlock(String rawBlock, int pageIndex) {
+        String block = rawBlock.replaceAll("\\s+", " ").trim(); // 줄바꿈/다중 공백 정리
+
+        Matcher start = SURGERY_ROW_START.matcher(block);
+        if (!start.find()) return null;
+
+        String seq = start.group(1).trim();
+        String startDate = start.group(2).trim();
+        String rest = start.group(3).trim(); // 병원명~끝까지
+
+        // 뒤에서 숫자 3개(1회투약량/투여횟수/총투약일수) 떼기
+        String dosePerOnce = null;
+        String timesPerDay = null;
+        String totalDays = null;
+
+        Matcher tail = TRAILING_3_NUMS.matcher(rest);
+        if (tail.find()) {
+            dosePerOnce = tail.group(1);
+            timesPerDay = tail.group(2);
+            totalDays = tail.group(3);
+            rest = rest.substring(0, tail.start()).trim();
+        }
+
+        // ✅ "수 술"처럼 끊긴 케이스도 block 정리 후엔 "수술"이 됨
+        // 코드명 판정은 일단 포함 여부로
+        boolean hasSurgery = rest.contains("수술");
+        if (!hasSurgery) {
+            return null; // 수술만 뽑을 거면 여기서 컷
+        }
+
+        // rest 앞부분에서 병원명/진료내역/코드명 분리
+        // 샘플상 "연세웰치과의원 처치 및 수술/처치 및 수술(양방) ..."
+        // → 최소 MVP: 병원명은 첫 토큰, 진료내역은 그 다음 1~몇 토큰, 코드명은 나머지로 두자.
+        // (정교화는 실제 데이터 더 보고 조정)
+        String[] tokens = rest.split(" ");
+        String institutionName = tokens.length > 0 ? tokens[0] : null;
+
+        // 진료내역은 보통 짧음: "처치" 또는 "처치 및 수술/처치 및 수술(양방)" 같은 덩어리
+        // 여기선 두 번째 토큰을 treatmentItem로 두고, 나머지를 codeName으로 붙임 (MVP)
+        String treatmentItem = tokens.length > 1 ? tokens[1] : null;
+        String codeName = (tokens.length > 2) ? String.join(" ", Arrays.copyOfRange(tokens, 2, tokens.length)) : null;
+
+        return PdfRowRecord.builder()
+                .pageIndex(pageIndex)
+                .target(HighlightTarget.TREATMENT_DETAIL)
+                .rawLine(block)
+
+                .sequence(seq)
+                .treatmentStartDate(startDate)
+                .institutionName(institutionName)
+                .treatmentItem(treatmentItem)
+                .codeName(codeName)
+                .dosePerOnce(dosePerOnce)
+                .timesPerDay(timesPerDay)
+                .totalDays(totalDays)
+
+                .treatmentDetail(block) // 디버깅 겸
+                .build();
     }
 
     private void writeSurgeryExcel(List<PdfRowRecord> hits, Path out) {
@@ -355,25 +413,6 @@ public class DocumentServiceImpl implements DocumentService {
     }
 
 
-    /**
-     * (선택) highlightService가 전체 타입을 세팅해주는 방식이라면 condition별로만 남기고 싶을 때 사용
-     * - VisitSummaryRecord.getHighlightTypes()가 "mutable set"일 때만 안전함
-     */
-//    private List<VisitSummaryRecord> filterByCondition(
-//            List<VisitSummaryRecord> original,
-//            List<VisitSummaryRecord> applied,
-//            int condition
-//    ) {
-//        HighlightType only = mapConditionToType(condition);
-//        if (only == null) return applied;
-//
-//        for (VisitSummaryRecord r : applied) {
-//            Set<HighlightType> types = r.getHighlightTypes();
-//            if (types == null) continue;
-//            types.retainAll(Collections.singleton(only));
-//        }
-//        return applied;
-//    }
     private HighlightType mapConditionToType(int condition) {
         // 너의 condition 매핑 규칙에 맞게 수정
         return switch (condition) {
@@ -385,160 +424,12 @@ public class DocumentServiceImpl implements DocumentService {
         };
     }
 
-    /**
-     * ✅ 페이지별로 텍스트를 뽑아서 record에 pageNumber를 넣어준다.
-     * (지금 generateHighlightedPdf가 pageNumber 기반으로 하이라이트를 찍기 때문)
-     */
-//    private static final java.util.regex.Pattern ROW_PATTERN =
-//            java.util.regex.Pattern.compile(
-//                    // (선택) 순번
-//                    "^(?:\\s*(\\d+)\\s+)?" +
-//                            // 병원명 (공백 포함)
-//                            "(.+?)\\s+" +
-//                            // 입원(외래)일수: 11(0) or 11
-//                            "(\\d+(?:\\(\\d+\\))?)\\s+" +
-//                            // 금액 3개(콤마 포함)
-//                            "([\\d,]+)\\s+([\\d,]+)\\s+([\\d,]+)" +
-//                            // (선택) 뒤에 남는 텍스트
-//                            "(?:\\s+(.*))?$"
-//            );
 
-    /**
-     * ✅ PDF(docType=HighlightTarget)별로 "행(row)"을 복원(줄바꿈 합치기)한 뒤 VisitSummaryRecord로 파싱한다.
-     * - HighlightTarget은 이미 프로젝트에서 사용중인 enum을 그대로 재사용한다.
-     * - pageNumber는 0-based(pageIndex)로 넣는다. (generateHighlightedPdf가 0-based로 사용 중)
-     */
-    private static final java.util.regex.Pattern ROW_START_SEQ =
-            java.util.regex.Pattern.compile("^\\d+\\s+.*"); // "1 ..."
 
     private static final java.util.regex.Pattern ROW_START_SEQ_DATE =
             java.util.regex.Pattern.compile("^\\d+\\s+\\d{4}-\\d{2}-\\d{2}\\s+.*"); // "1 2025-04-29 ..."
 
-//    private List<PdfRowRecord> parsePdfToRecordsFromPdf(Path pdfPath) {
-//        log.info("📄 parsePdfToRecordsFromPdf: {}", pdfPath.getFileName());
-//
-//        List<PdfRowRecord> out = new ArrayList<>();
-//
-//        try (PDDocument doc = PDDocument.load(pdfPath.toFile())) {
-//            PDFTextStripper stripper = new PDFTextStripper();
-//
-//            // 1) 이 PDF가 어떤 타입인지(=어떤 파서를 쓸지) 감지
-//            HighlightTarget target = detectHighlightTarget(doc, stripper);
-//            log.info("📌 detected target={}", target);
-//
-//            // 2) 줄바꿈으로 쪼개진 한 행(row)을 다시 합치기 위한 버퍼
-//            StringBuilder rowBuf = new StringBuilder();
-//
-//            int pages = doc.getNumberOfPages();
-//            for (int pageIndex = 0; pageIndex < pages; pageIndex++) {
-//                stripper.setStartPage(pageIndex + 1);
-//                stripper.setEndPage(pageIndex + 1);
-//
-//                String text = stripper.getText(doc);
-//                String[] lines = text.split("\\r?\\n");
-//
-//                for (String rawLine : lines) {
-//                    String line = rawLine == null ? "" : rawLine.trim();
-//                    if (line.isEmpty()) continue;
-//
-//                    // 헤더/설명 줄 제거 (필요하면 더 추가)
-//                    if (isHeaderOrNoiseLine(line)) continue;
-//
-//                    boolean newRow = isRowStart(target, line);
-//
-//                    if (newRow) {
-//                        flushRow(out, target, rowBuf, pageIndex);
-//                        rowBuf.append(line);
-//                    } else {
-//                        // 같은 행의 줄바꿈 조각이면 이어붙임
-//                        if (!rowBuf.isEmpty()) rowBuf.append(" ");
-//                        rowBuf.append(line);
-//                    }
-//                }
-//            }
-//
-//            // 마지막 버퍼 flush
-//            flushRow(out, target, rowBuf, Math.max(0, pages - 1));
-//            return out;
-//
-//        } catch (IOException e) {
-//            throw new BaseException(ExceptionEnum.FILE_READ_ERROR);
-//        }
-//    }
 
-    /**
-     * ✅ PDF 첫 페이지 텍스트로 HighlightTarget 판별
-     * - 네가 올린 4종 PDF 제목 문자열을 기준으로 분기
-     */
-//    private HighlightTarget detectHighlightTarget(PDDocument doc, PDFTextStripper stripper) throws IOException {
-//        stripper.setStartPage(1);
-//        stripper.setEndPage(1);
-//        String firstPage = stripper.getText(doc);
-//
-//        if (firstPage.contains("진료정보요약")) return HighlightTarget.VISIT_SUMMARY;
-//        if (firstPage.contains("기본진료정보")) return HighlightTarget.DRUG_SUMMARY; // "BASIC"이 없으니 임시 매핑
-//        if (firstPage.contains("세부진료정보")) return HighlightTarget.TREATMENT_DETAIL;
-//        if (firstPage.contains("처방조제정보")) return HighlightTarget.PRESCRIPTION;
-//
-//        // fallback(원하는 정책으로 변경 가능)
-//        return HighlightTarget.VISIT_SUMMARY;
-//    }
-
-    /**
-     * ✅ target별 "새 행 시작" 규칙
-     * - 진료정보요약: "순번(숫자) + ..." 형태
-     * - 나머지: "순번 + 날짜 + ..." 형태
-     */
-//    private boolean isRowStart(HighlightTarget target, String line) {
-//        return switch (target) {
-//            case VISIT_SUMMARY -> ROW_START_SEQ.matcher(line).find();
-//            case DRUG_SUMMARY, TREATMENT_DETAIL, PRESCRIPTION -> ROW_START_SEQ_DATE.matcher(line).find();
-//        };
-//    }
-//
-//    private boolean isHeaderOrNoiseLine(String line) {
-//        // 공통 헤더/설명 제거
-//        if (line.startsWith("순번")) return true;
-//
-//        // 진료정보요약 표 헤더들
-//        if (line.contains("병·의원&약국")) return true;
-//        if (line.contains("입원(외래)일수")) return true;
-//        if (line.contains("총 진료비")) return true;
-//        if (line.contains("혜택받은 금액")) return true;
-//        if (line.contains("내가 낸 의료비")) return true;
-//        if (line.contains("(건강보험 적용분)")) return true;
-//        if (line.contains("(진료비)")) return true;
-//
-//        // 기본/세부/처방 표 헤더들
-//        if (line.contains("진료시작일")) return true;
-//        if (line.contains("주상병")) return true;
-//        if (line.contains("코드")) return true;
-//        if (line.contains("진료내역")) return true;
-//        if (line.contains("약품명")) return true;
-//        if (line.contains("성분명")) return true;
-//        if (line.contains("1회")) return true;
-//        if (line.contains("투약량")) return true;
-//        if (line.contains("투여횟수")) return true;
-//        if (line.contains("총")) return true; // "총 투약일수" 등
-//
-//        // 섹션 제목 자체
-//        if (line.contains("진료정보요약")) return true;
-//        if (line.contains("기본진료정보")) return true;
-//        if (line.contains("세부진료정보")) return true;
-//        if (line.contains("처방조제정보")) return true;
-//
-//        return false;
-//    }
-//
-//    private void flushRow(List<PdfRowRecord> out, HighlightTarget target, StringBuilder rowBuf, int pageIndex) {
-//        if (rowBuf == null || rowBuf.isEmpty()) return;
-//
-//        String row = rowBuf.toString().trim();
-//        rowBuf.setLength(0);
-//
-//        PdfRowRecord parsed = parseRowByTarget(target, row, pageIndex);
-//        if (parsed != null) out.add(parsed);
-//    }
 
     /**
      * ✅ target별 row 파싱
@@ -554,8 +445,6 @@ public class DocumentServiceImpl implements DocumentService {
             case PRESCRIPTION -> parsePrescriptionRow(row, pageIndex);       // 처방조제정보 PDF
         };
     }
-
-// --- Row parsers (MVP) ---
 
     private static final java.util.regex.Pattern VISIT_SUMMARY_ROW =
             java.util.regex.Pattern.compile(  "^(\\d+)\\s+(.+?)\\s+(\\d+\\(\\d+\\))\\s+([\\d,]+)\\s+([\\d,]+)\\s+([\\d,]+)\\s*$");

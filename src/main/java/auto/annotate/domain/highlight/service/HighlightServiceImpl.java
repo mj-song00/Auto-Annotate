@@ -1,5 +1,6 @@
 package auto.annotate.domain.highlight.service;
 
+import auto.annotate.common.utils.SurgeryTokenMatcher;
 import auto.annotate.domain.document.dto.HighlightTarget;
 import auto.annotate.domain.document.dto.HighlightType;
 import auto.annotate.domain.document.dto.response.PdfRowRecord;
@@ -8,47 +9,18 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 
 import java.util.*;
-import java.util.regex.Pattern;
 import java.util.stream.Collectors;
 
 import static auto.annotate.common.utils.HospitalKeyUtils.isPharmacy;
 import static auto.annotate.common.utils.HospitalKeyUtils.parseTotalDays;
+
 
 @Service
 @Slf4j
 @RequiredArgsConstructor
 public class HighlightServiceImpl implements HighlightService {
 
-    // todo : 현재 사용되지 않아 주석처리된 메서드 정리
-//
-//    private static final java.util.regex.Pattern IN_OUT_PATTERN =
-//            java.util.regex.Pattern.compile("^(\\d+)\\((\\d+)\\)$");
-
-//    private static class InOutDays {
-//        final int inpatient;   // 입원
-//        final int outpatient;  // 외래(내원)
-//        InOutDays(int inpatient, int outpatient) {
-//            this.inpatient = inpatient;
-//            this.outpatient = outpatient;
-//        }
-//    }
-//
-//    private InOutDays parseInOutDays(String raw) {
-//        if (raw == null) return new InOutDays(0, 0);
-//        String v = raw.replaceAll("\\s+", "");
-//
-//        var m = IN_OUT_PATTERN.matcher(v);
-//        if (m.find()) {
-//            return new InOutDays(Integer.parseInt(m.group(1)), Integer.parseInt(m.group(2)));
-//        }
-//
-//        // "11"처럼 괄호 없이 나오면 입원으로 취급(정책은 필요하면 바꿔)
-//        try {
-//            return new InOutDays(Integer.parseInt(v), 0);
-//        } catch (Exception e) {
-//            return new InOutDays(0, 0);
-//        }
-//    }
+    private final SurgeryTokenMatcher surgeryTokenMatcher;
 
     @Override
     public List<PdfRowRecord> applyHighlights(List<PdfRowRecord> records, int condition) {
@@ -135,7 +107,7 @@ public class HighlightServiceImpl implements HighlightService {
             case HAS_HOSPITALIZATION -> {
                 String norm = String.valueOf(r.getTreatmentDetail()).replaceAll("\\s+", "");
                 boolean contains = norm.contains("수술");
-                boolean hit = hasRealSurgeryToken(r.getTreatmentDetail());
+                boolean hit = surgeryTokenMatcher.hasRealSurgeryToken(r.getTreatmentDetail());
 
                 log.info("[SURGERY_RULE] page={}, target={}, containsSool={}, hitToken={}, normSample={}",
                         r.getPageIndex(), r.getTarget(), contains, hit,
@@ -150,7 +122,7 @@ public class HighlightServiceImpl implements HighlightService {
 
             case HAS_SURGERY -> {
                 String norm = String.valueOf(r.getTreatmentDetail()).replaceAll("\\s+", "");
-                boolean hit = hasRealSurgeryToken(r.getTreatmentDetail());
+                boolean hit = surgeryTokenMatcher.hasRealSurgeryToken(r.getTreatmentDetail());
                 if (norm.contains("수술")) {
                     log.info("[SURGERY_HITCHECK] hit={}, norm={}", hit, norm);
                 }
@@ -205,66 +177,5 @@ public class HighlightServiceImpl implements HighlightService {
 
         // 영문은 소문자로 통일
         return s.toLowerCase();
-    }
-
-
-
-//    private int parseInpatientDays(String s) {
-//        if (s == null) return 0;
-//        s = s.trim();
-//
-//        var m = java.util.regex.Pattern.compile("^(\\d+)\\((\\d+)\\)$").matcher(s);
-//        if (m.find()) {
-//            return safeParseInt(m.group(1)); // 괄호 앞 = 입원일수
-//        }
-//        return 0;
-//    }
-
-    // ✅ PdfRowRecord 전체 문자열에서 "입원(외래)일수" 패턴을 찾아 입원 여부 판단
-//    private boolean hasHospitalizationLoose(PdfRowRecord r) {
-//        if (r.getTarget() != HighlightTarget.VISIT_SUMMARY) return false;
-//
-//        // ✅ 레코드 전체를 문자열로 덤프 (필드 어디에 있든 잡기)
-//        String blob = String.valueOf(r).replaceAll("\\s+", "");
-//
-//        Matcher m = Pattern.compile("(\\d+)\\((\\d+)\\)").matcher(blob);
-//        while (m.find()) {
-//            int inpatient = safeParseInt(m.group(1));
-//            if (inpatient > 0) return true;
-//        }
-//        return false;
-//    }
-
-//    private String safe(String s) {
-//        return s == null ? "" : s;
-//    }
-
-    private boolean isSurgeryByCodeName(String codeName) {
-        if (codeName == null) return false;
-        String s = codeName.replaceAll("\\s+", "");
-
-        // 수술로 치면 안 되는 것(너가 발견한 반례)
-        if (s.contains("수술후처치") || s.contains("단순처치")) return false;
-
-        // 진짜 수술: 보수적으로는 endsWith 추천
-        return s.endsWith("수술");
-        // 또는 좀 더 넓게: return s.contains("수술");
-    }
-
-    // "…수술"로 끝나는 토큰을 잡아내기 위한 패턴
-    private static final Pattern REAL_SURGERY_TOKEN =
-            Pattern.compile("([가-힣A-Za-z0-9\\[\\]\\/\\-]{2,}수술)(?=\\d|$)");
-
-    private boolean hasRealSurgeryToken(String rowText) {
-        if (rowText == null) return false;
-
-        String s = rowText.replaceAll("\\s+", ""); // 줄바꿈/공백 제거
-
-        // ❌ 오탐 대표 케이스 제외
-        if (s.contains("수술후처치")) return false;
-        if (s.contains("단순처치")) return false;
-
-        // ✅ "…수술" 토큰이 있으면 true
-        return REAL_SURGERY_TOKEN.matcher(s).find();
     }
 }
