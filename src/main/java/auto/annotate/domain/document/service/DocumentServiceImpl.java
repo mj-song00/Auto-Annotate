@@ -37,6 +37,7 @@ import java.nio.file.Paths;
 import java.util.*;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
+import java.util.stream.Collectors;
 
 import static auto.annotate.common.utils.HospitalKeyUtils.*;
 
@@ -184,12 +185,11 @@ public class DocumentServiceImpl implements DocumentService {
 
         return switch (condition) {
             case 0 -> downloadVisitOver7DaysExcel(documentId);
- //           case 1 -> downloadDrugOver30DaysExcel(documentId);
+            case 1 -> downloadDrugOver30DaysExcel(documentId);
             case 2 -> downloadHospitalizationExcel(documentId);
             case 3 -> downloadSurgeryExcel(documentId);
             default -> throw new BaseException(ExceptionEnum.DOCUMENT_NOT_FOUND);
         };
-
     }
 
     private Resource downloadVisitOver7DaysExcel(UUID documentId){
@@ -510,7 +510,6 @@ public class DocumentServiceImpl implements DocumentService {
         List<String> tokens = Arrays.asList(row.trim().split("\\s+"));
         if (tokens.size() < 6) return null;
 
-        // String seq = tokens.get(0); // 내부 모델에 sequence 없으면 저장 안 함
         String totalDays = tokens.get(tokens.size() - 1); // 총투약일수
 
         int start = 2; // seq, date 다음
@@ -522,8 +521,8 @@ public class DocumentServiceImpl implements DocumentService {
                 .target(HighlightTarget.TREATMENT_DETAIL)
                 .rawLine(row)
                 .institutionName(institutionName.isBlank() ? null : institutionName)
-                .daysOfStayOrVisit(totalDays)  // 총투약일수
-                .treatmentDetail(row)          // MVP: 원문 유지
+                .totalDays(totalDays)
+                .treatmentDetail(row)
                 .build();
     }
 
@@ -532,10 +531,17 @@ public class DocumentServiceImpl implements DocumentService {
      * - 맨 끝 토큰을 총투약일수로 간주
      */
     private PdfRowRecord parsePrescriptionRow(String row, int pageIndex) {
+        String s = row == null ? "" : row.replaceAll("\\s+", " ").trim();
+        if (s.isBlank()) return null;
+
+        log.info("[PRESCRIPTION_PARSE] HIT pageIndex={}, head='{}'",
+                pageIndex,
+                s.substring(0, Math.min(80, s.length()))
+        );
+
         List<String> tokens = Arrays.asList(row.trim().split("\\s+"));
         if (tokens.size() < 6) return null;
 
-        // seq = tokens.get(0); // 내부 모델에 sequence 없으면 굳이 보관 안 함
         String totalDays = tokens.get(tokens.size() - 1);
 
         int start = 2; // seq, date 다음
@@ -547,12 +553,10 @@ public class DocumentServiceImpl implements DocumentService {
                 .target(HighlightTarget.PRESCRIPTION)
                 .rawLine(row)
                 .institutionName(institutionName.isBlank() ? null : institutionName)
-                .daysOfStayOrVisit(totalDays)
-                .treatmentDetail(row) // MVP: 원문 유지
+                .totalDays(totalDays)
+                .treatmentDetail(row)
                 .build();
     }
-
-// --- helpers ---
 
     private int indexOfAny(List<String> tokens, String... keys) {
         for (int i = 0; i < tokens.size(); i++) {
@@ -652,7 +656,6 @@ public class DocumentServiceImpl implements DocumentService {
                             //  입원은 진료정보요약의 "입원(외래)일수" 텍스트(예: 11(0))를 하이라이트
                             case HAS_HOSPITALIZATION -> record.getDaysOfStayOrVisit();
 
-                            // TODO: 수술/30일약은 지금처럼 treatmentDetail을 쓰든, 해당 문서 타입에 맞게 바꿔야 함
                             case HAS_SURGERY -> extractSurgeryToken(record.getTreatmentDetail());
 
                             case MONTH_30_DRUG -> record.getTreatmentDetail();
@@ -979,6 +982,12 @@ public class DocumentServiceImpl implements DocumentService {
 
         String row = buf.toString().trim();
         buf.setLength(0);
+
+        // VISIT_SUMMARY는 기존 로직 유지
+        if (target != HighlightTarget.VISIT_SUMMARY) {
+            // "1 2025-04-29 ..." 형태가 아니면(헤더/면책/페이지정보) 버림
+            if (!ROW_START_SEQ_DATE.matcher(row).find()) return;
+        }
 
         PdfRowRecord parsed = parseRowByTarget(target, row, pageIndex);
         if (parsed != null) rows.add(parsed);
@@ -1395,6 +1404,185 @@ public class DocumentServiceImpl implements DocumentService {
 
         } catch (IOException e) {
             throw new BaseException(ExceptionEnum.FILE_WRITE_ERROR);
+        }
+    }
+
+    private static final int THRESHOLD_DAYS = 30;
+
+    public Resource downloadDrugOver30DaysExcel(UUID documentId) {
+
+
+        Document base = documentRepository.findById(documentId)
+                .orElseThrow(() -> new BaseException(ExceptionEnum.DOCUMENT_NOT_FOUND));
+
+        String bundleKey = base.getBundleKey();
+
+        HighlightTarget target = HighlightTarget.PRESCRIPTION;
+
+        Document targetDoc = documentRepository.findByBundleKeyAndTarget(bundleKey, target)
+                .orElseThrow(() -> new BaseException(ExceptionEnum.DOCUMENT_NOT_FOUND));
+
+        Path originalPdfPath = Paths.get(uploadDir, targetDoc.getFileUrl());
+        if (!Files.exists(originalPdfPath)) throw new BaseException(ExceptionEnum.FILE_NOT_FOUND);
+
+        // 1) PDF 파싱
+        List<PdfRowRecord> rows = parsePdfToRows(originalPdfPath, target);
+
+        // 2) PRESCRIPTION 대상만
+        List<PdfRowRecord> drugRows = rows.stream()
+                .filter(r -> r.getTarget() == HighlightTarget.PRESCRIPTION)
+                .toList();
+
+        // 3) 같은 날짜 + 같은 약(성분+약품명) 기준으로
+        //    처방조제 우선, 없으면 외래
+        Map<String, PdfRowRecord> pickedByDayDrug = new HashMap<>();
+
+        for (PdfRowRecord r : drugRows) {
+            String date = safe(r.getTreatmentStartDate());
+            String ingredient = normalizeDrugKey(r.getCodeName());
+            String drugName = normalizeDrugKey(r.getTreatmentItem());
+
+            if (date.isBlank() || ingredient.isBlank() || drugName.isBlank()) continue;
+
+            String dayDrugKey = date + "|" + ingredient + "|" + drugName;
+
+            log.info("[DAY_DRUG_KEY] type={}, key={}",
+                    safe(r.getRawLine()).contains("처방조제") ? "처방조제" : "외래",
+                    dayDrugKey
+            );
+
+            PdfRowRecord prev = pickedByDayDrug.get(dayDrugKey);
+            if (prev == null) {
+                pickedByDayDrug.put(dayDrugKey, r);
+                continue;
+            }
+
+            boolean prevIsDispense = safe(prev.getRawLine()).contains("처방조제");
+            boolean currIsDispense = safe(r.getRawLine()).contains("처방조제");
+
+            // 기존이 외래이고, 현재가 처방조제면 교체
+            if (!prevIsDispense && currIsDispense) {
+                pickedByDayDrug.put(dayDrugKey, r);
+            }
+        }
+
+        List<PdfRowRecord> pickedRows = new ArrayList<>(pickedByDayDrug.values());
+
+        // 4) 누적 집계 (기존 메서드 그대로 사용)
+        Map<String, Integer> sumByDrug = sumTotalDaysByDrugKey(pickedRows);
+
+        // 5) 30일 이상 약 키
+        Set<String> hitKeys = sumByDrug.entrySet().stream()
+                .filter(e -> e.getValue() >= THRESHOLD_DAYS)
+                .map(Map.Entry::getKey)
+                .collect(Collectors.toSet());
+
+        // 6) 근거 row만
+        List<PdfRowRecord> hitRows = pickedRows.stream()
+                .filter(r -> {
+                    String key = normalizeDrugKey(r.getCodeName()) + "|" +
+                            normalizeDrugKey(r.getTreatmentItem());
+                    return hitKeys.contains(key);
+                })
+                .sorted(Comparator.comparingInt(PdfRowRecord::getPageIndex)
+                        .thenComparing(r -> safe(r.getInstitutionName()))
+                        .thenComparing(r -> safe(r.getTreatmentStartDate())))
+                .toList();
+
+        // 7) 엑셀 생성
+        Path out = resolveExcelOutputPath(bundleKey, "drug30days");
+        writeDrugOver30DaysExcel(hitRows, sumByDrug, out);
+
+        return new FileSystemResource(out);
+    }
+
+    private void writeDrugOver30DaysExcel(List<PdfRowRecord> hits, Map<String, Integer> sumByDrug, Path out) {
+        try (Workbook wb = new XSSFWorkbook()) {
+            Sheet sheet = wb.createSheet("30일초과약제");
+
+            String[] headers = {
+                    "순번",
+                    "진료시작일",
+                    "병·의원&약국",
+                    "약품명",
+                    "성분명",
+                    "1회 투약량",
+                    "1회 투여횟수",
+                    "총 투약일수",
+                    "누적 투약일수",
+                    "페이지",
+                    "원문"
+            };
+
+            Row headerRow = sheet.createRow(0);
+            for (int i = 0; i < headers.length; i++) {
+                headerRow.createCell(i).setCellValue(headers[i]);
+            }
+
+            int rowIdx = 1;
+            for (PdfRowRecord r : hits) {
+                Row row = sheet.createRow(rowIdx++);
+
+                String key = normalizeDrugKey(r.getCodeName()) + "|" + normalizeDrugKey(r.getTreatmentItem());
+                int totalSum = sumByDrug.getOrDefault(key, 0);
+
+                row.createCell(0).setCellValue(safe(r.getSequence()));
+                row.createCell(1).setCellValue(safe(r.getTreatmentStartDate()));
+                row.createCell(2).setCellValue(safe(r.getInstitutionName()));
+                row.createCell(3).setCellValue(safe(r.getTreatmentItem()));  // 약품명
+                row.createCell(4).setCellValue(safe(r.getCodeName()));       // 성분명
+                row.createCell(5).setCellValue(safe(r.getDosePerOnce()));
+                row.createCell(6).setCellValue(safe(r.getTimesPerDay()));
+                row.createCell(7).setCellValue(safe(r.getTotalDays()));
+                row.createCell(8).setCellValue(totalSum);
+                row.createCell(9).setCellValue(r.getPageIndex() + 1);
+                row.createCell(10).setCellValue(safe(r.getRawLine()));
+            }
+
+            for (int i = 0; i < headers.length; i++) sheet.autoSizeColumn(i);
+
+            Files.createDirectories(out.getParent());
+            try (OutputStream os = Files.newOutputStream(out)) {
+                wb.write(os);
+            }
+
+        } catch (IOException e) {
+            throw new BaseException(ExceptionEnum.FILE_WRITE_ERROR);
+        }
+    }
+
+    private Map<String, Integer> sumTotalDaysByDrugKey(List<PdfRowRecord> drugRows) {
+        Map<String, Integer> sumByDrug = new HashMap<>();
+
+        for (PdfRowRecord r : drugRows) {
+            String ingredient = normalizeDrugKey(r.getCodeName());       // 성분명
+            String drugName = normalizeDrugKey(r.getTreatmentItem());    // 약품명
+
+            if (ingredient.isBlank() || drugName.isBlank()) continue;
+
+            String key = ingredient + "|" + drugName;
+
+            int days = parsePositiveInt(r.getTotalDays());
+            if (days <= 0) continue;
+
+            sumByDrug.merge(key, days, Integer::sum);
+        }
+        return sumByDrug;
+    }
+
+    private String normalizeDrugKey(String s) {
+        if (s == null) return "";
+        return s.replaceAll("\\s+", "").replace("_", "");
+    }
+
+    private int parsePositiveInt(String s) {
+        if (s == null) return 0;
+        String n = s.replaceAll("[^0-9]", "");
+        if (n.isBlank()) return 0;
+        try {
+            return Integer.parseInt(n);
+        } catch (NumberFormatException e) {
+            return 0;
         }
     }
 }
