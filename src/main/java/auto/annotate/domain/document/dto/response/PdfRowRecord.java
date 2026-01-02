@@ -31,7 +31,7 @@ public class PdfRowRecord {
     // SURGERY(또는 처치/진료내역) 테이블용
     private final String treatmentStartDate;   // 진료시작일
     private final String treatmentItem;        // 진료내역
-    private final String codeName;             // 코드명  ✅ 여기서 "수술" 필터
+    private final String codeName;             // 코드명. 여기서 "수술" 필터
     private final String dosePerOnce;          // 1회 투약량 (없으면 null)
     private final String timesPerDay;          // 1회 투여횟수
     private final String totalDays;            // 총 투약일수
@@ -50,11 +50,21 @@ public class PdfRowRecord {
                 .rawLine(this.rawLine)
                 .sequence(this.sequence)
                 .institutionName(this.institutionName)
+
                 .daysOfStayOrVisit(this.daysOfStayOrVisit)
                 .totalMedicalFee(this.totalMedicalFee)
                 .insuranceBenefit(this.insuranceBenefit)
                 .userPaidAmount(this.userPaidAmount)
+
+                .treatmentStartDate(this.treatmentStartDate)
+                .treatmentItem(this.treatmentItem)
+                .codeName(this.codeName)
+                .dosePerOnce(this.dosePerOnce)
+                .timesPerDay(this.timesPerDay)
+                .totalDays(this.totalDays)
+
                 .treatmentDetail(this.treatmentDetail)
+
                 .highlightTypes(new HashSet<>(types))
                 .build();
     }

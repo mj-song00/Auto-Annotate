@@ -38,8 +38,7 @@ import java.util.*;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
-import static auto.annotate.common.utils.HospitalKeyUtils.findHospitalKeysWith7Days;
-import static auto.annotate.common.utils.HospitalKeyUtils.normalizeHospitalKey;
+import static auto.annotate.common.utils.HospitalKeyUtils.*;
 
 
 @Service
@@ -144,7 +143,8 @@ public class DocumentServiceImpl implements DocumentService {
         return new FileSystemResource(out);
     }
 
-    private static final Pattern INOUT_ANYWHERE = Pattern.compile("(\\d+)\\((\\d+)\\)");
+    private static final Pattern INOUT_ANYWHERE =
+            Pattern.compile("(\\d+)[\\(（](\\d+)[\\)）]");
 
     private List<String> findHospitalizationTokensOnPage(PDDocument document, int pageIndex) throws IOException {
         PDFTextStripper stripper = new PDFTextStripper();
@@ -157,8 +157,16 @@ public class DocumentServiceImpl implements DocumentService {
         Matcher m = INOUT_ANYWHERE.matcher(norm);
         while (m.find()) {
             int inpatient = safeParseInt(m.group(1));
-            if (inpatient > 0) tokens.add(m.group(0));  // 예: "11(0)"
+            if (inpatient > 0) {
+                String token = m.group(0)
+                        .replace('（', '(')
+                        .replace('）', ')');   // ✅ 괄호 통일
+
+                tokens.add(token);           // 예: "11(0)"
+            }
         }
+        log.info("[HOSP_TOKEN_SCAN] pageIndex={}, tokens={}", pageIndex, tokens);
+
         return tokens;
     }
 
@@ -176,8 +184,8 @@ public class DocumentServiceImpl implements DocumentService {
 
         return switch (condition) {
             case 0 -> downloadVisitOver7DaysExcel(documentId);
-//            case 1 -> downloadDrugOver30DaysExcel(documentId);
-//            case 2 -> downloadHospitalizationExcel(documentId);
+ //           case 1 -> downloadDrugOver30DaysExcel(documentId);
+            case 2 -> downloadHospitalizationExcel(documentId);
             case 3 -> downloadSurgeryExcel(documentId);
             default -> throw new BaseException(ExceptionEnum.DOCUMENT_NOT_FOUND);
         };
@@ -447,7 +455,7 @@ public class DocumentServiceImpl implements DocumentService {
     }
 
     private static final java.util.regex.Pattern VISIT_SUMMARY_ROW =
-            java.util.regex.Pattern.compile(  "^(\\d+)\\s+(.+?)\\s+(\\d+\\(\\d+\\))\\s+([\\d,]+)\\s+([\\d,]+)\\s+([\\d,]+)\\s*$");
+            Pattern.compile("^(\\d+)\\s+(.+?)\\s+(\\d+[\\(（]\\d+[\\)）])\\s+([\\d,]+)\\s+([\\d,]+)\\s+([\\d,]+)\\s*$");
 
     private PdfRowRecord parseVisitSummaryRow(String row, int pageIndex) {
         var m = VISIT_SUMMARY_ROW.matcher(row);
@@ -1075,9 +1083,13 @@ public class DocumentServiceImpl implements DocumentService {
         }
 
         String safeBundleKey = bundleKey.replaceAll("[^a-zA-Z0-9\\-]", "");
-        String fileName = String.format("%s-visit7days-%s.xlsx",
+        String safeText = (text == null ? "out" : text.replaceAll("[^a-zA-Z0-9\\-]", ""));
+
+        String fileName = String.format("%s-%s-%s-%s.xlsx",
                 safeBundleKey,
-                java.time.LocalDate.now().format(java.time.format.DateTimeFormatter.BASIC_ISO_DATE)
+                safeText,
+                java.time.LocalDate.now().format(java.time.format.DateTimeFormatter.BASIC_ISO_DATE),
+                java.util.UUID.randomUUID().toString().substring(0, 8)   // ✅ 캐시/덮어쓰기 방지
         );
 
         return dir.resolve(fileName);
@@ -1097,42 +1109,292 @@ public class DocumentServiceImpl implements DocumentService {
                 String text = stripper.getText(doc);
                 String[] lines = text.split("\\r?\\n");
 
+                StringBuilder buf = new StringBuilder();
+                boolean buffering = false;
+
                 for (String raw : lines) {
                     String line = (raw == null) ? "" : raw.trim();
                     if (line.isEmpty()) continue;
 
-                    // 헤더/설명 라인 스킵
                     if (line.startsWith("순번")) continue;
                     if (line.contains("병·의원&약국")) continue;
-                    if (line.startsWith("진료내용")) continue; // 추가
+                    if (line.startsWith("진료내용")) continue;
+                    if (line.startsWith("총 진료비")) continue;
+                    if (line.startsWith("(건강보험")) continue;
+                    if (line.startsWith("건강보험")) continue;
+                    if (line.startsWith("혜택받은")) continue;
+                    if (line.startsWith("내가 낸")) continue;
 
-                    Matcher m = VISIT_SUMMARY_ROW.matcher(line);
+                    boolean seqOnly = line.matches("^\\d+$");
+                    boolean seqWithText = line.matches("^\\d+\\s+.*");
+                    boolean startsRow = seqOnly || seqWithText;
+
+                    if (startsRow) {
+                        buf.setLength(0);
+                        buf.append(line);
+                        buffering = true;
+                    } else if (buffering) {
+                        buf.append(" ").append(line);
+                    } else {
+                        continue;
+                    }
+
+                    String merged = buf.toString().replaceAll("\\s+", " ").trim();
+
+                    Matcher m = VISIT_SUMMARY_ROW.matcher(merged);
                     if (!m.find()) continue;
+
+                    String instRaw = m.group(2).trim().replaceAll("\\s+", " ");
+                    String[] parts = instRaw.split(" ");
+
+                    StringBuilder inst = new StringBuilder();
+                    boolean first = true;
+
+                    for (int i = 0; i < parts.length; i++) {
+                        String cur = parts[i];
+                        String prev = (i > 0) ? parts[i - 1] : null;
+
+                        boolean curIsOneHangul = cur.length() == 1 && cur.matches("[가-힣]");
+                        boolean prevIsOneHangul = prev != null && prev.length() == 1 && prev.matches("[가-힣]");
+
+                        if (first) {
+                            inst.append(cur);
+                            first = false;
+                            continue;
+                        }
+
+                        if (curIsOneHangul && prevIsOneHangul) inst.append(cur);
+                        else inst.append(' ').append(cur);
+                    }
 
                     PdfRowRecord r = PdfRowRecord.builder()
                             .pageIndex(pageIndex)
                             .target(HighlightTarget.VISIT_SUMMARY)
-                            .rawLine(line)
-
-                            // ✅ 통합모델 컬럼 채우기
+                            .rawLine(merged)
                             .sequence(m.group(1).trim())
                             .institutionName(m.group(2).trim())
                             .daysOfStayOrVisit(m.group(3).trim())
                             .totalMedicalFee(m.group(4).trim())
                             .insuranceBenefit(m.group(5).trim())
                             .userPaidAmount(m.group(6).trim())
-
-                            // VISIT_SUMMARY는 상세가 따로 없으면 원문을 남겨도 되고, null로 둬도 됨
                             .treatmentDetail(null)
                             .build();
 
                     out.add(r);
+
+                    buf.setLength(0);
+                    buffering = false;
                 }
             }
+
             return out;
 
         } catch (IOException e) {
             throw new BaseException(ExceptionEnum.FILE_READ_ERROR);
+        }
+    }
+
+    private Resource downloadHospitalizationExcel(UUID documentId) {
+
+        Document base = documentRepository.findById(documentId)
+                .orElseThrow(() -> new BaseException(ExceptionEnum.DOCUMENT_NOT_FOUND));
+
+        String bundleKey = base.getBundleKey();
+        HighlightTarget target = HighlightTarget.VISIT_SUMMARY;
+
+        Document targetDoc = documentRepository.findByBundleKeyAndTarget(bundleKey, target)
+                .orElseThrow(() -> new BaseException(ExceptionEnum.DOCUMENT_NOT_FOUND));
+
+        Path originalPdfPath = Paths.get(uploadDir, targetDoc.getFileUrl());
+        if (!Files.exists(originalPdfPath)) throw new BaseException(ExceptionEnum.FILE_NOT_FOUND);
+
+        List<PdfRowRecord> rows = parseVisitSummaryPdf(originalPdfPath);
+
+        List<PdfRowRecord> hits = rows.stream()
+                .filter(r -> !isPharmacy(r.getInstitutionName()))
+                .filter(r -> {
+                    String v = safe(r.getDaysOfStayOrVisit()).replaceAll("\\s+", "");
+                    Matcher m = INOUT_ANYWHERE.matcher(v);
+                    return m.find() && safeParseInt(m.group(1)) > 0;
+                })
+                .sorted(Comparator.comparingInt(PdfRowRecord::getPageIndex)
+                        .thenComparing(r -> safe(r.getInstitutionName())))
+                .toList();
+
+        log.info("[HOSP_EXCEL] hitsByRowParse={}", hits.size());
+
+        if (hits.isEmpty()) {
+            log.info("[HOSP_EXCEL_FALLBACK] use token-scan + reconstruct row");
+
+            try (PDDocument doc = PDDocument.load(originalPdfPath.toFile())) {
+
+                PDFTextStripper stripper = new PDFTextStripper();
+                List<PdfRowRecord> fallbackHits = new ArrayList<>();
+
+                int pages = doc.getNumberOfPages();
+                for (int pageIndex = 0; pageIndex < pages; pageIndex++) {
+
+                    List<String> tokens = findHospitalizationTokensOnPage(doc, pageIndex);
+                    if (tokens.isEmpty()) continue;
+
+                    stripper.setStartPage(pageIndex + 1);
+                    stripper.setEndPage(pageIndex + 1);
+                    String pageText = stripper.getText(doc);
+                    String[] lines = pageText.split("\\r?\\n");
+
+                    StringBuilder buf = new StringBuilder();
+                    boolean buffering = false;
+
+                    for (String raw : lines) {
+                        String line = (raw == null) ? "" : raw.trim();
+                        if (line.isEmpty()) continue;
+
+                        if (line.startsWith("순번")) continue;
+                        if (line.contains("병·의원&약국")) continue;
+                        if (line.startsWith("진료내용")) continue;
+                        if (line.startsWith("총 진료비")) continue;
+                        if (line.startsWith("(건강보험")) continue;
+                        if (line.startsWith("건강보험")) continue;
+                        if (line.startsWith("혜택받은")) continue;
+                        if (line.startsWith("내가 낸")) continue;
+
+                        boolean seqOnly = line.matches("^\\d+$");
+                        boolean seqWithText = line.matches("^\\d+\\s+.*");
+                        boolean startsRow = seqOnly || seqWithText;
+
+                        if (startsRow) {
+                            if (buffering && buf.length() > 0) {
+                                String block = buf.toString().replaceAll("\\s+", " ").trim();
+
+                                boolean containsToken = false;
+                                for (String t : tokens) {
+                                    if (block.contains(t)) { containsToken = true; break; }
+                                    String t2 = t.replace('(', '（').replace(')', '）');
+                                    if (block.contains(t2)) { containsToken = true; break; }
+                                }
+
+                                if (containsToken) {
+                                    Matcher m = VISIT_SUMMARY_ROW.matcher(block);
+                                    if (m.find()) {
+                                        String inout = m.group(3).trim();
+                                        Matcher in = INOUT_ANYWHERE.matcher(inout.replaceAll("\\s+", ""));
+                                        if (in.find() && safeParseInt(in.group(1)) > 0) {
+                                            fallbackHits.add(PdfRowRecord.builder()
+                                                    .pageIndex(pageIndex)
+                                                    .target(HighlightTarget.VISIT_SUMMARY)
+                                                    .rawLine(block)
+                                                    .sequence(m.group(1).trim())
+                                                    .institutionName(m.group(2).trim())
+                                                    .daysOfStayOrVisit(inout)
+                                                    .totalMedicalFee(m.group(4).trim())
+                                                    .insuranceBenefit(m.group(5).trim())
+                                                    .userPaidAmount(m.group(6).trim())
+                                                    .treatmentDetail(null)
+                                                    .build());
+                                        }
+                                    }
+                                }
+                            }
+
+                            buf.setLength(0);
+                            buf.append(line);
+                            buffering = true;
+
+                        } else if (buffering) {
+                            buf.append(" ").append(line);
+                        }
+                    }
+
+                    if (buffering && buf.length() > 0) {
+                        String block = buf.toString().replaceAll("\\s+", " ").trim();
+
+                        boolean containsToken = false;
+                        for (String t : tokens) {
+                            if (block.contains(t)) { containsToken = true; break; }
+                            String t2 = t.replace('(', '（').replace(')', '）');
+                            if (block.contains(t2)) { containsToken = true; break; }
+                        }
+
+                        if (containsToken) {
+                            Matcher m = VISIT_SUMMARY_ROW.matcher(block);
+                            if (m.find()) {
+                                String inout = m.group(3).trim();
+                                Matcher in = INOUT_ANYWHERE.matcher(inout.replaceAll("\\s+", ""));
+                                if (in.find() && safeParseInt(in.group(1)) > 0) {
+                                    fallbackHits.add(PdfRowRecord.builder()
+                                            .pageIndex(pageIndex)
+                                            .target(HighlightTarget.VISIT_SUMMARY)
+                                            .rawLine(block)
+                                            .sequence(m.group(1).trim())
+                                            .institutionName(m.group(2).trim())
+                                            .daysOfStayOrVisit(inout)
+                                            .totalMedicalFee(m.group(4).trim())
+                                            .insuranceBenefit(m.group(5).trim())
+                                            .userPaidAmount(m.group(6).trim())
+                                            .treatmentDetail(null)
+                                            .build());
+                                }
+                            }
+                        }
+                    }
+                }
+
+                hits = fallbackHits;
+                log.info("[HOSP_EXCEL_FALLBACK] reconstructedHits={}", hits.size());
+
+            } catch (IOException e) {
+                throw new BaseException(ExceptionEnum.FILE_READ_ERROR);
+            }
+        }
+
+        Path out = resolveExcelOutputPath(bundleKey, "hospitalization");
+        writeHospitalizationExcel(hits, out);
+
+        return new FileSystemResource(out);
+    }
+
+    private void writeHospitalizationExcel(List<PdfRowRecord> rows, Path out) {
+        try (Workbook wb = new XSSFWorkbook()) {
+            Sheet sheet = wb.createSheet("입원내역");
+
+            String[] headers = {
+                    "순번",
+                    "병·의원&약국",
+                    "입원(외래)일수",
+                    "총 진료비(건강보험 적용분)",
+                    "건강보험 등 혜택받은 금액",
+                    "내가 낸 의료비(진료비)",
+                    "페이지",
+                    "원문"
+            };
+
+            Row headerRow = sheet.createRow(0);
+            for (int i = 0; i < headers.length; i++) {
+                headerRow.createCell(i).setCellValue(headers[i]);
+            }
+
+            int rowIdx = 1;
+            for (PdfRowRecord r : rows) {
+                Row row = sheet.createRow(rowIdx++);
+                row.createCell(0).setCellValue(safe(r.getSequence()));
+                row.createCell(1).setCellValue(safe(r.getInstitutionName()));
+                row.createCell(2).setCellValue(safe(r.getDaysOfStayOrVisit()));
+                row.createCell(3).setCellValue(safe(r.getTotalMedicalFee()));
+                row.createCell(4).setCellValue(safe(r.getInsuranceBenefit()));
+                row.createCell(5).setCellValue(safe(r.getUserPaidAmount()));
+                row.createCell(6).setCellValue(r.getPageIndex() + 1);
+                row.createCell(7).setCellValue(safe(r.getRawLine()));
+            }
+
+            for (int i = 0; i < headers.length; i++) sheet.autoSizeColumn(i);
+
+            Files.createDirectories(out.getParent());
+            try (OutputStream os = Files.newOutputStream(out)) {
+                wb.write(os);
+            }
+
+        } catch (IOException e) {
+            throw new BaseException(ExceptionEnum.FILE_WRITE_ERROR);
         }
     }
 }

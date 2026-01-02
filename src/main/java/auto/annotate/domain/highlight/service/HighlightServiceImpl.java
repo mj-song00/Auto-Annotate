@@ -1,5 +1,6 @@
 package auto.annotate.domain.highlight.service;
 
+import auto.annotate.common.utils.HospitalizationTokenMatcher;
 import auto.annotate.common.utils.SurgeryTokenMatcher;
 import auto.annotate.domain.document.dto.HighlightTarget;
 import auto.annotate.domain.document.dto.HighlightType;
@@ -9,10 +10,11 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 
 import java.util.*;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 import java.util.stream.Collectors;
 
-import static auto.annotate.common.utils.HospitalKeyUtils.isPharmacy;
-import static auto.annotate.common.utils.HospitalKeyUtils.parseTotalDays;
+import static auto.annotate.common.utils.HospitalKeyUtils.*;
 
 
 @Service
@@ -21,6 +23,7 @@ import static auto.annotate.common.utils.HospitalKeyUtils.parseTotalDays;
 public class HighlightServiceImpl implements HighlightService {
 
     private final SurgeryTokenMatcher surgeryTokenMatcher;
+    private final HospitalizationTokenMatcher hospitalizationTokenMatcher;
 
     @Override
     public List<PdfRowRecord> applyHighlights(List<PdfRowRecord> records, int condition) {
@@ -76,24 +79,15 @@ public class HighlightServiceImpl implements HighlightService {
      * ✅ condition(onlyType)에 해당하는 룰만 적용해서 highlightTypes를 세팅한다.
      * - immutable 방식: record.withHighlightTypes(types) 사용
      */
+
+    private static final Pattern INOUT_ANYWHERE = Pattern.compile("(\\d+)\\((\\d+)\\)");
+
+
     private PdfRowRecord applyRuleByCondition(
             PdfRowRecord r,
             HighlightType onlyType,
             Set<String> hospitalKeysWith7OutpatientDays
     ) {
-        log.info("[RULE] onlyType={}, target={}, page={}, head={}",
-                onlyType, r.getTarget(), r.getPageIndex(),
-                (r.getTreatmentDetail() == null ? "null" :
-                        r.getTreatmentDetail().substring(0, Math.min(40, r.getTreatmentDetail().length())))
-        );
-
-        if (onlyType == HighlightType.HAS_SURGERY) {
-            String norm = String.valueOf(r.getTreatmentDetail()).replaceAll("\\s+","");
-            if (norm.contains("수술")) {
-                log.info("[SOOL_ROW_SAMPLE] {}", norm);
-            }
-        }
-
         Set<HighlightType> types = new HashSet<>(r.getHighlightTypes());
 
         switch (onlyType) {
@@ -105,35 +99,24 @@ public class HighlightServiceImpl implements HighlightService {
             }
 
             case HAS_HOSPITALIZATION -> {
-                String norm = String.valueOf(r.getTreatmentDetail()).replaceAll("\\s+", "");
-                boolean contains = norm.contains("수술");
-                boolean hit = surgeryTokenMatcher.hasRealSurgeryToken(r.getTreatmentDetail());
+                if (r.getTarget() != HighlightTarget.VISIT_SUMMARY) break;
+                if (isPharmacy(r.getInstitutionName())) break;
 
-                log.info("[SURGERY_RULE] page={}, target={}, containsSool={}, hitToken={}, normSample={}",
-                        r.getPageIndex(), r.getTarget(), contains, hit,
-                        norm.substring(0, Math.min(80, norm.length()))
-                );
-
-
-                if (r.getTarget() == HighlightTarget.TREATMENT_DETAIL && hit) {
-                    types.add(HighlightType.HAS_SURGERY);
+                if (hospitalizationTokenMatcher.hasHospitalization(r.getDaysOfStayOrVisit())) {
+                    types.add(HighlightType.HAS_HOSPITALIZATION);
+                    log.info("[HOSP_RULE_HIT] page={}, inst='{}', inout='{}'",
+                            r.getPageIndex(), r.getInstitutionName(), r.getDaysOfStayOrVisit());
                 }
             }
 
             case HAS_SURGERY -> {
-                String norm = String.valueOf(r.getTreatmentDetail()).replaceAll("\\s+", "");
+                if (r.getTarget() != HighlightTarget.TREATMENT_DETAIL) break;
                 boolean hit = surgeryTokenMatcher.hasRealSurgeryToken(r.getTreatmentDetail());
-                if (norm.contains("수술")) {
-                    log.info("[SURGERY_HITCHECK] hit={}, norm={}", hit, norm);
-                }
-
-                if (r.getTarget() == HighlightTarget.TREATMENT_DETAIL && hit) {
-                    types.add(HighlightType.HAS_SURGERY);
-                }
+                if (hit) types.add(HighlightType.HAS_SURGERY);
             }
 
-            default -> {
-                // 나머지 조건은 추후 추가
+            case MONTH_30_DRUG -> {
+                // 지금 안 쓰면 비워도 됨
             }
         }
 
@@ -177,5 +160,10 @@ public class HighlightServiceImpl implements HighlightService {
 
         // 영문은 소문자로 통일
         return s.toLowerCase();
+    }
+
+    private int safeParseInt(String v) {
+        try { return Integer.parseInt(v); }
+        catch (Exception e) { return 0; }
     }
 }
