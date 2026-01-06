@@ -8,8 +8,5 @@ import java.util.Optional;
 import java.util.UUID;
 
 public interface DocumentRepository extends JpaRepository<Document, UUID> {
-    Optional<Document> findFirstByBundleKeyAndTarget(UUID documentId, HighlightTarget target);
-
     Optional<Document> findByBundleKeyAndTarget(String bundleKey, HighlightTarget target);
-
 }
