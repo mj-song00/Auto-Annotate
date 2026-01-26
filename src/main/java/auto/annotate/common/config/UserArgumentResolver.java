@@ -1,7 +1,7 @@
 package auto.annotate.common.config;
 
 import auto.annotate.common.annotation.Auth;
-import auto.annotate.domain.user.dto.User;
+import auto.annotate.domain.user.dto.AuthUser;
 import auto.annotate.domain.user.enums.UserRole;
 import edu.umd.cs.findbugs.annotations.Nullable;
 import jakarta.servlet.http.HttpServletRequest;
@@ -34,6 +34,6 @@ public class UserArgumentResolver implements HandlerMethodArgumentResolver {
         String username = (String) request.getAttribute("username");
         String roleStr = (String) request.getAttribute("role");
         UserRole role = UserRole.valueOf(roleStr);
-        return new User(id, username, role);
+        return new AuthUser(id, username, role);
     }
 }
