@@ -16,7 +16,8 @@ public enum ExceptionEnum {
     FILE_READ_ERROR(HttpStatus.BAD_REQUEST, "FILE_READ_ERROR", "pdf를 읽는 중 오류가 발생하였습니다"),
     FILE_WRITE_ERROR(HttpStatus.BAD_REQUEST, "FILE_WRITE_ERROR","pdf를 수정하던중 오류가 발생하였습니다" ),
     FILE_NOT_FOUND(HttpStatus.BAD_REQUEST,"FILE_NOT_FOUND", "file을 찾지 못했습니다" ),
-    FILE_SAVE_FAILED(HttpStatus.BAD_REQUEST," ILE_SAVE_FAILED","저장이 실패하였습니다." );
+    FILE_SAVE_FAILED(HttpStatus.BAD_REQUEST, "FILE_SAVE_FAILED","저장이 실패하였습니다." ),
+    USER_NOT_FOUND(HttpStatus.BAD_REQUEST,"USER_NOT_FOUND" , "유저를 확인할 수 없습니다." );
 
 
     private final HttpStatus status;

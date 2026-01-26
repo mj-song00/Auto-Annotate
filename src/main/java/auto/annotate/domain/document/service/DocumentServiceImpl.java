@@ -11,6 +11,9 @@ import auto.annotate.domain.document.repository.DocumentRepository;
 import auto.annotate.domain.highlight.overlay.HighlightMark;
 import auto.annotate.domain.highlight.overlay.PdfOverlayRenderer;
 import auto.annotate.domain.highlight.service.HighlightService;
+import auto.annotate.domain.user.dto.AuthUser;
+import auto.annotate.domain.user.entity.User;
+import auto.annotate.domain.user.reposotiry.UserRepository;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.pdfbox.pdmodel.PDDocument;
@@ -49,12 +52,15 @@ public class DocumentServiceImpl implements DocumentService {
     private final DocumentRepository documentRepository;
     private final HighlightService highlightService;
     private final SurgeryTokenMatcher surgeryTokenMatcher;
+    private final UserRepository userRepository;
 
     @Value("${pdf.file.upload-dir}")
     private String uploadDir;
 
     @Override
-    public List<Document> save(List<MultipartFile> multipartFiles) {
+    public List<Document> save(List<MultipartFile> multipartFiles, AuthUser authUser) {
+        User user  =  getUser(authUser.getId());
+
         String bundleKey = java.util.UUID.randomUUID().toString();
         List<Document> savedDocuments = new ArrayList<>();
         // 1. 파일 시스템 저장 경로 준비 및 고유 식별자 (ID) 결정
@@ -102,7 +108,8 @@ public class DocumentServiceImpl implements DocumentService {
                     originalFilename,
                     storedFilename,
                     bundleKey,
-                    target
+                    target,
+                    user
             );
 
             Document savedDocument = documentRepository.save(document);
@@ -1780,5 +1787,10 @@ public class DocumentServiceImpl implements DocumentService {
         );
 
         return new FileSystemResource(out);
+    }
+
+    private User getUser(UUID id) {
+        return userRepository.findById(id)
+                .orElseThrow(() -> new BaseException(ExceptionEnum.USER_NOT_FOUND));
     }
 }

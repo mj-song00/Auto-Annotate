@@ -1,12 +1,14 @@
 package auto.annotate.domain.document.controller;
 
 
+import auto.annotate.common.annotation.Auth;
 import auto.annotate.common.exception.BaseException;
 import auto.annotate.common.exception.ExceptionEnum;
 import auto.annotate.common.response.ApiResponse;
 import auto.annotate.common.response.ApiResponseEnum;
 import auto.annotate.domain.document.repository.DocumentRepository;
 import auto.annotate.domain.document.service.DocumentService;
+import auto.annotate.domain.user.dto.AuthUser;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.core.io.Resource;
@@ -36,13 +38,14 @@ public class DocumentController {
             consumes = MediaType.MULTIPART_FORM_DATA_VALUE,
             produces = MediaType.APPLICATION_JSON_VALUE)
     public ResponseEntity<ApiResponse<Void>> fileUpLoad(
-            @RequestPart("documents") List<MultipartFile> multipartFile
+            @RequestPart("documents") List<MultipartFile> multipartFile,
+            @Auth AuthUser authUser
             ){
         if (multipartFile.isEmpty()) {
             throw new BaseException(ExceptionEnum.DOCUMENT_NOT_FOUND);
         }
 
-        documentService.save(multipartFile);
+        documentService.save(multipartFile, authUser);
         ApiResponse<Void> response = ApiResponse.successWithOutData(ApiResponseEnum.REGISTRATION_SUCCESS);
         return ResponseEntity.status(HttpStatus.OK).body(response);
     }
