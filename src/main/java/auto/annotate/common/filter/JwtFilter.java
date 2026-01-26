@@ -2,25 +2,23 @@ package auto.annotate.common.filter;
 
 import auto.annotate.common.jwt.JwtUtil;
 import io.jsonwebtoken.Claims;
-import jakarta.servlet.FilterChain;
-import jakarta.servlet.ServletException;
-import jakarta.servlet.ServletRequest;
-import jakarta.servlet.ServletResponse;
-import jakarta.servlet.http.Cookie;
-import jakarta.servlet.http.HttpServletRequest;
-import jakarta.servlet.http.HttpServletResponse;
+
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
 
 import java.io.IOException;
 import java.util.List;
+import jakarta.servlet.*;
+import jakarta.servlet.http.Cookie;
+import jakarta.servlet.http.HttpServletRequest;
+import jakarta.servlet.http.HttpServletResponse;
 import java.util.UUID;
 
 import static org.aspectj.weaver.tools.cache.SimpleCacheFactory.path;
 
 @Slf4j
 @Component
-public class JwtFilter {
+public class JwtFilter implements Filter {
     private final JwtUtil jwtUtil;
     private static final List<String> SWAGGER_WHITELIST = List.of(
             "/swagger-ui", "/swagger-ui.html", "/v3/api-docs",
