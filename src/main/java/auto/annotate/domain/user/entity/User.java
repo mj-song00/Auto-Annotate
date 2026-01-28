@@ -4,6 +4,8 @@ import auto.annotate.common.entity.Timestamped;
 import auto.annotate.domain.document.entity.Document;
 import auto.annotate.domain.user.enums.UserRole;
 import jakarta.persistence.*;
+import jakarta.validation.constraints.Email;
+import jakarta.validation.constraints.NotBlank;
 import lombok.AccessLevel;
 import lombok.AllArgsConstructor;
 import lombok.Getter;
@@ -36,11 +38,38 @@ public class User extends Timestamped {
     private UserRole userRole; // 사용자 역할
 
     @Column
-    private LocalDateTime deletedAt;
+    private String password;
 
+    @Column
+    private LocalDateTime deletedAt;
 
     @OneToMany(mappedBy = "user", orphanRemoval = true, fetch = FetchType.LAZY)
     private List<Document> documents = new ArrayList<>();
 
+    public User(
+            @NotBlank @Email String email,
+            @NotBlank String nickName,
+            String encodedPassword,
+            UserRole userRole
+    ){
+        this.email = email;
+        this.nickName = nickName;
+        this.password = encodedPassword;
+        this.userRole = userRole;
+    }
 
+    // 비밀번호 변경
+    public void updatePassword(String password) {
+        this.password = password;
+    }
+
+    // 닉네임 변경
+    public void updateNickName(String nickName) {
+        this.nickName = nickName;
+    }
+
+    // 회원 탈퇴
+    public void updateDeletedAt() {
+        this.deletedAt = LocalDateTime.now();
+    }
 }
