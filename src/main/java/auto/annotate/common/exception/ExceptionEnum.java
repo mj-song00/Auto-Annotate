@@ -20,6 +20,7 @@ public enum ExceptionEnum {
 
     USER_NOT_FOUND(HttpStatus.BAD_REQUEST,"USER_NOT_FOUND" , "유저를 확인할 수 없습니다." ),
     USER_ALREADY_EXISTS(HttpStatus.BAD_REQUEST, "HttpStatus.BAD_REQUEST","이미 존재하는 계정입니다."),
+    UNAUTHORIZED_USER(HttpStatus.UNAUTHORIZED, "UNAUTHORIZED_USER", "인증되지 않은 사용자입니다."),
     ALREADY_DELETED(HttpStatus.BAD_REQUEST, "ALREADY_DELETED", "탈퇴된 사용자입니다."),
     EMAIL_OR_PASSWORD_MISMATCH(HttpStatus.BAD_REQUEST, "EMAIL_PASSWORD_MISMATCH", "이메일 혹은 비밀번호가 일치하지 않습니다."),
     PASSWORD_SAME_AS_OLD(HttpStatus.BAD_REQUEST, "PASSWORD_SAME_AS_OLD", "새 비밀번호가 기존 비밀번호와 동일합니다."),
