@@ -24,7 +24,8 @@ import java.util.UUID;
 public class User extends Timestamped {
 
     @Id
-    @Column(columnDefinition = "BINARY(16)", nullable = false)
+    @GeneratedValue(strategy = GenerationType.UUID)
+    @Column
     private UUID id;
 
     @Column(nullable = false, unique = true)
