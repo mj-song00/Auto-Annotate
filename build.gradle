@@ -59,7 +59,7 @@ dependencies {
     implementation 'at.favre.lib:bcrypt:0.10.2'
 
     //redis
-    implementation("org.springframework.boot:spring-boot-starter-data-redis:3.4.4")
+    implementation 'org.springframework.boot:spring-boot-starter-data-redis'
 }
 
 tasks.named('test') {
