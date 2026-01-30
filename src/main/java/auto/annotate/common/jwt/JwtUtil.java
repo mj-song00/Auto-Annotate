@@ -55,8 +55,7 @@ public class JwtUtil {
     //토큰 생성
     public String createToken(UUID userId, UserRole userRole) {
         Date date = new Date();
-        return BEARER_PREFIX +
-                Jwts.builder()
+        return Jwts.builder()
                         .subject(String.valueOf(userId))
                         .claim("role", userRole.name())
                         .expiration(new Date(date.getTime() + accessTokenExpiration * 1000))
