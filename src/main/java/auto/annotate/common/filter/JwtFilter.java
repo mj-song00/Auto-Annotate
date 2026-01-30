@@ -47,7 +47,10 @@ public class JwtFilter implements Filter {
         if (url.startsWith("/api/v1/users/sign-up") || url.startsWith("/api/v1/users/auth/sign-in")
                 || (url.startsWith("/swagger-ui") || url.startsWith("/v3/api-docs"))
                 || (url.startsWith("/api/v1/users/auth/refresh-token"))
-                || (url.startsWith("/api/v1/users/auth/logout"))) {
+                || (url.startsWith("/api/v1/users/auth/logout"))
+                || (url.startsWith("/"))
+        )
+        {
             chain.doFilter(request, response);
             return;
         }
