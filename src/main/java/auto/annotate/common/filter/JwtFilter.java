@@ -2,19 +2,16 @@ package auto.annotate.common.filter;
 
 import auto.annotate.common.jwt.JwtUtil;
 import io.jsonwebtoken.Claims;
-
+import jakarta.servlet.*;
+import jakarta.servlet.http.Cookie;
+import jakarta.servlet.http.HttpServletRequest;
+import jakarta.servlet.http.HttpServletResponse;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
 
 import java.io.IOException;
 import java.util.List;
-import jakarta.servlet.*;
-import jakarta.servlet.http.Cookie;
-import jakarta.servlet.http.HttpServletRequest;
-import jakarta.servlet.http.HttpServletResponse;
 import java.util.UUID;
-
-import static org.aspectj.weaver.tools.cache.SimpleCacheFactory.path;
 
 @Slf4j
 @Component
@@ -38,22 +35,18 @@ public class JwtFilter implements Filter {
         String url = httpRequest.getRequestURI();
 
         // Swagger 경로는 JWT 검증 없이 통과
-        if (SWAGGER_WHITELIST.stream().anyMatch(path::startsWith)) {
+        if (SWAGGER_WHITELIST.stream().anyMatch(url::startsWith)) {
             chain.doFilter(request, response);
             return;
         }
 
         //가입, 로그인은 jwt 체크 불필요
-        // 1. 화이트리스트 통합 관리 (추천)
-        if (url.equals("/") ||                          // 루트 (리다이렉트용)
-                url.startsWith("/login") ||                 // 로그인 페이지 (타임리프)
-                url.startsWith("/signup") ||                // 회원가입 페이지 (타임리프)
-                url.startsWith("/api/v1/users/sign-up") ||  // 회원가입 API
-                url.startsWith("/api/v1/users/auth/sign-in") ||
+        if (    !url.startsWith("/api/") ||
                 url.startsWith("/swagger-ui") ||
                 url.startsWith("/v3/api-docs") ||
-                url.startsWith("/api/v1/users/auth/refresh-token") ||
-                url.startsWith("/api/v1/users/auth/logout")
+                url.startsWith("/api/v1/users/auth/sign-in") ||
+                url.startsWith("/api/v1/users/auth/sign-up") ||
+                url.startsWith("/api/v1/users/auth/refresh-token") // refreshToken API
         ) {
             chain.doFilter(request, response);
             return;
@@ -68,7 +61,6 @@ public class JwtFilter implements Filter {
 
         // 헤더에서 Authorization 토큰을 가져옵니다.
         String authorizationHeader = httpRequest.getHeader("Authorization");
-
 
         // refreshToken 재발급 API인 경우 쿠키에서 refreshToken 꺼내기
         if (authorizationHeader == null || !authorizationHeader.startsWith("Bearer ")) {
