@@ -1,211 +1,142 @@
 <!DOCTYPE html>
-<html xmlns:th="http://www.thymeleaf.org">
 <head>
-    <title>PDF 미리보기</title>
+    <meta charset="UTF-8">
+    <title>Highlight Automation</title>
 
-    <!-- PDF.js -->
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/2.16.105/pdf.min.js"></script>
-    <script>
-        pdfjsLib.GlobalWorkerOptions.workerSrc =
-            "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/2.16.105/pdf.worker.min.js";
-    </script>
+    <style>
+        html, body {
+            margin: 0;
+            height: 100%;
+        }
+
+        #app {
+            height: 100%;
+            display: flex;
+            flex-direction: column;
+        }
+
+        header {
+            height: 56px;
+            padding: 0 16px;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            border-bottom: 1px solid #ddd;
+            box-sizing: border-box;
+        }
+
+        main {
+            flex: 1;
+            display: flex;
+            min-height: 0;
+        }
+
+        aside {
+            width: 240px;
+            border-right: 1px solid #ddd;
+            padding: 16px;
+            box-sizing: border-box;
+        }
+
+        section#content {
+            flex: 1;
+            padding: 16px;
+            box-sizing: border-box;
+            overflow: auto;
+        }
+
+        ul.folder-list {
+            list-style: none;
+            padding: 0;
+            margin: 0;
+        }
+
+        ul.folder-list li {
+            padding: 6px 4px;
+            cursor: pointer;
+        }
+
+        ul.folder-list li.active {
+            font-weight: bold;
+        }
+
+        .upload-center {
+            height: 100%;
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+            text-align: center;
+        }
+
+        .upload-center button {
+            margin-top: 12px;
+        }
+
+        .result-area {
+            display: none;
+        }
+
+        .download-buttons button {
+            display: block;
+            margin-bottom: 8px;
+        }
+    </style>
 </head>
 
 <body>
-<h1>PDF 미리보기</h1>
 
-<!--  미리보기 버튼: 기존대로 PDF 모달을 연다. 해당 기능 요청이 있을때 까지는 주석으로 처리한다. -->
-<!--<button id="btn0" type="button" disabled onclick="window.openPdfModal(0)">동일 병원 7일 이상 (미리보기)</button>-->
-<!--<button id="btn1" type="button" disabled onclick="window.openPdfModal(1)">30일 초과 약제 (미리보기)</button>-->
-<!--<button id="btn2" type="button" disabled onclick="window.openPdfModal(2)">입원 (미리보기)</button>-->
-<!--<button id="btn3" type="button" disabled onclick="window.openPdfModal(3)">수술 (미리보기)</button>-->
+<div id="app">
 
-<!-- ✅ 다운로드 버튼: 바로 엑셀 다운로드 -->
-<button id="dl0" type="button" disabled onclick="window.downloadExcel(0)">동일 병원 7일 이상 (엑셀)</button>
-<button id="dl1" type="button" disabled onclick="window.downloadExcel(1)">30일 이상 복용 (엑셀)</button>
-<button id="dl2" type="button" disabled onclick="window.downloadExcel(2)">입원 (엑셀)</button>
-<button id="dl3" type="button" disabled onclick="window.downloadExcel(3)">수술 (엑셀)</button>
+    <header>
+        <h1>Highlight Automation</h1>
+        <button type="button">로그아웃</button>
+    </header>
 
-<div id="pdfModal"
-     style="display:none; position:fixed; top:10%; left:10%; width:80%; height:80%;
-            background:#fff; border:1px solid #ccc; padding:10px; overflow:auto;">
-    <canvas id="pdfCanvas"></canvas>
+    <main>
 
-    <div style="margin-top:10px;">
-        <button id="prevPage">◀ 이전</button>
-        <button id="nextPage">다음 ▶</button>
-        <span>페이지: <span id="pageNum"></span> / <span id="pageCount"></span></span>
-    </div>
+        <!-- 왼쪽: 폴더 영역 (초기엔 비어 있음) -->
+        <aside>
+            <ul class="folder-list">
+                <!-- 업로드 후 폴더 이름이 여기에 추가됨 -->
+                <!-- <li class="active">2026-01</li> -->
+            </ul>
+        </aside>
 
-    <div style="margin-top:10px;">
-        <!-- ✅ PDF 파일 다운로드 (기존 기능 유지) -->
-        <button onclick="downloadPdf()">PDF 다운로드</button>
-        <button onclick="closePdfModal()">닫기</button>
-    </div>
+        <!-- 오른쪽: 콘텐츠 영역 -->
+        <section id="content">
+
+            <!-- 초기 상태: 업로드 안내 -->
+            <div class="upload-center">
+                <p>PDF 파일을 업로드해 주세요.</p>
+                <button type="button">파일 업로드</button>
+            </div>
+
+            <!-- 업로드 완료 후 상태 -->
+            <div class="result-area">
+                <h2>다운로드</h2>
+
+                <div class="download-buttons">
+                    <button id="dl0" type="button" disabled>
+                        동일 병원 7일 이상 (엑셀)
+                    </button>
+                    <button id="dl1" type="button" disabled>
+                        30일 이상 복용 (엑셀)
+                    </button>
+                    <button id="dl2" type="button" disabled>
+                        입원 (엑셀)
+                    </button>
+                    <button id="dl3" type="button" disabled>
+                        수술 (엑셀)
+                    </button>
+                </div>
+            </div>
+
+        </section>
+
+    </main>
+
 </div>
 
-<!-- ✅ 서버 모델(documentIds)을 JS로 주입 -->
-<script th:inline="javascript">
-    const documentIds = /*[[${documentIds}]]*/ [];
-</script>
-
-<script>
-    document.addEventListener("DOMContentLoaded", function () {
-
-        // ✅ 추가 API 없이: 첫 번째 문서를 기본으로 사용
-        let documentId = (documentIds && documentIds.length > 0) ? String(documentIds[0]) : "";
-
-        console.log("documentIds =", documentIds);
-        console.log("selected documentId =", documentId);
-
-        let currentConditionNo = null;
-        let pdfDoc = null;
-        let pageNum = 1;
-        let pageRendering = false;
-        let pageNumPending = null;
-
-        const scale = 1.5;
-        const canvas = document.getElementById("pdfCanvas");
-        const ctx = canvas.getContext("2d");
-        const modal = document.getElementById("pdfModal");
-
-        function setButtonsEnabled(enabled) {
-            ["btn0","btn1","btn2","btn3","dl0","dl1","dl2","dl3"].forEach(id => {
-                const el = document.getElementById(id);
-                if (el) el.disabled = !enabled;
-            });
-        }
-
-        // ✅ 문서가 없으면 버튼만 막고 콘솔에만 남김
-        if (!documentId) {
-            console.error("documentIds가 비어있음. 서버가 model에 documentIds 내려주는지/DB에 Document가 있는지 확인");
-            setButtonsEnabled(false);
-            return;
-        } else {
-            setButtonsEnabled(true);
-        }
-
-        function resetViewerState() {
-            ctx.clearRect(0, 0, canvas.width, canvas.height);
-            document.getElementById("pageNum").textContent = "";
-            document.getElementById("pageCount").textContent = "";
-            pageNum = 1;
-            pageRendering = false;
-            pageNumPending = null;
-
-            if (pdfDoc && typeof pdfDoc.destroy === "function") {
-                pdfDoc.destroy();
-            }
-            pdfDoc = null;
-        }
-
-        function renderPage(num) {
-            if (!pdfDoc) return;
-
-            pageRendering = true;
-
-            pdfDoc.getPage(num).then(page => {
-                const viewport = page.getViewport({ scale });
-                canvas.height = viewport.height;
-                canvas.width = viewport.width;
-
-                const renderTask = page.render({ canvasContext: ctx, viewport });
-
-                renderTask.promise.then(() => {
-                    pageRendering = false;
-                    document.getElementById("pageNum").textContent = num;
-
-                    if (pageNumPending !== null) {
-                        const next = pageNumPending;
-                        pageNumPending = null;
-                        renderPage(next);
-                    }
-                });
-            }).catch(err => {
-                pageRendering = false;
-                console.error("페이지 렌더링 실패:", err);
-            });
-        }
-
-        function queueRenderPage(num) {
-            if (pageRendering) pageNumPending = num;
-            else renderPage(num);
-        }
-
-        document.getElementById("prevPage").addEventListener("click", () => {
-            if (!pdfDoc || pageNum <= 1) return;
-            pageNum--;
-            queueRenderPage(pageNum);
-        });
-
-        document.getElementById("nextPage").addEventListener("click", () => {
-            if (!pdfDoc || pageNum >= pdfDoc.numPages) return;
-            pageNum++;
-            queueRenderPage(pageNum);
-        });
-
-        // ✅ PDF 미리보기: 기존 highlighted 엔드포인트를 그대로 호출해야 한다!
-        window.openPdfModal = function (conditionNo) {
-            console.log("openPdfModal:", conditionNo, "documentId=", documentId);
-
-            currentConditionNo = conditionNo;
-
-            resetViewerState();
-            modal.style.display = "block";
-
-            const url = `/document/${documentId}/highlighted?condition=${conditionNo}&t=${Date.now()}`;
-            console.log("요청 URL(PDF):", url);
-
-            fetch(url, { cache: "no-store" })
-                .then(async (res) => {
-                    const ct = res.headers.get("content-type") || "";
-                    const buf = await res.arrayBuffer();
-
-                    console.log("fetch status:", res.status, res.statusText, "content-type:", ct, "bytes:", buf.byteLength);
-
-                    if (!res.ok) {
-                        const head = new TextDecoder().decode(buf.slice(0, 300));
-                        console.error("server error head:", head);
-                        throw new Error("HTTP " + res.status);
-                    }
-                    if (!ct.includes("pdf")) {
-                        const head = new TextDecoder().decode(buf.slice(0, 300));
-                        console.error("not pdf head:", head);
-                        throw new Error("Not a PDF response");
-                    }
-                    return buf;
-                })
-                .then(buf => pdfjsLib.getDocument({ data: buf }).promise)
-                .then(pdf => {
-                    pdfDoc = pdf;
-                    document.getElementById("pageCount").textContent = pdfDoc.numPages;
-                    renderPage(1);
-                })
-                .catch(err => console.error("PDF 로드 실패:", err));
-        };
-
-        // ✅ PDF 다운로드: 기존 유지
-        window.downloadPdf = function () {
-            if (!documentId || currentConditionNo === null) return;
-            const url = `/document/${documentId}/highlighted?condition=${currentConditionNo}&download=true&t=${Date.now()}`;
-            window.location.href = url;
-        };
-
-        // ✅ 엑셀 다운로드: fetch 쓰지 말고 location 이동(브라우저 다운로드 트리거)
-        window.downloadExcel = function (conditionNo) {
-            if (!documentId) return;
-
-            const url = `/document/${documentId}/excel?condition=${conditionNo}&t=${Date.now()}`;
-            console.log("요청 URL(EXCEL):", url);
-
-            window.location.href = url;
-        };
-
-        window.closePdfModal = function () {
-            modal.style.display = "none";
-            resetViewerState();
-        };
-    });
-</script>
 </body>
 </html>
