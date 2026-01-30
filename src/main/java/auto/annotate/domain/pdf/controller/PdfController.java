@@ -21,4 +21,8 @@ public class PdfController {
         return "signup";
     }
 
+    @GetMapping("/main")
+    public String mainPage(){
+        return "main";
+    }
 }
