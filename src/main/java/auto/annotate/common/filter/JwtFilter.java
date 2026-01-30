@@ -44,13 +44,17 @@ public class JwtFilter implements Filter {
         }
 
         //가입, 로그인은 jwt 체크 불필요
-        if (url.startsWith("/api/v1/users/sign-up") || url.startsWith("/api/v1/users/auth/sign-in")
-                || (url.startsWith("/swagger-ui") || url.startsWith("/v3/api-docs"))
-                || (url.startsWith("/api/v1/users/auth/refresh-token"))
-                || (url.startsWith("/api/v1/users/auth/logout"))
-                || (url.startsWith("/"))
-        )
-        {
+        // 1. 화이트리스트 통합 관리 (추천)
+        if (url.equals("/") ||                          // 루트 (리다이렉트용)
+                url.startsWith("/login") ||                 // 로그인 페이지 (타임리프)
+                url.startsWith("/signup") ||                // 회원가입 페이지 (타임리프)
+                url.startsWith("/api/v1/users/sign-up") ||  // 회원가입 API
+                url.startsWith("/api/v1/users/auth/sign-in") ||
+                url.startsWith("/swagger-ui") ||
+                url.startsWith("/v3/api-docs") ||
+                url.startsWith("/api/v1/users/auth/refresh-token") ||
+                url.startsWith("/api/v1/users/auth/logout")
+        ) {
             chain.doFilter(request, response);
             return;
         }
