@@ -1,33 +1,20 @@
 package auto.annotate.domain.pdf.controller;
 
-import auto.annotate.domain.document.entity.Document;
-import auto.annotate.domain.document.repository.DocumentRepository;
 import org.springframework.stereotype.Controller;
-import org.springframework.ui.Model;
 import org.springframework.web.bind.annotation.GetMapping;
-
-import java.util.List;
-import java.util.UUID;
 
 @Controller
 public class PdfController {
 
-    private final DocumentRepository documentRepository;
-
-    public PdfController(DocumentRepository documentRepository) {
-        this.documentRepository = documentRepository;
-    }
-
     @GetMapping("/")
-    public String pdfPreview(Model model) {
+    public String pdfPreview() {
 
-        List<UUID> documentIds = documentRepository.findAll()
-                .stream()
-                .map(Document::getId)
-                .toList();
-
-        model.addAttribute("documentIds", documentIds);
-
-        return "pdf_preview";
+        return "login";
     }
+
+    @GetMapping("/signup")
+    public String signup() {
+        return "signup";
+    }
+
 }
