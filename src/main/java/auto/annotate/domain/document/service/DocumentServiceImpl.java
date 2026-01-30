@@ -8,6 +8,9 @@ import auto.annotate.domain.document.dto.HighlightType;
 import auto.annotate.domain.document.dto.response.PdfRowRecord;
 import auto.annotate.domain.document.entity.Document;
 import auto.annotate.domain.document.repository.DocumentRepository;
+import auto.annotate.domain.folder.dto.SaveFolderRequest;
+import auto.annotate.domain.folder.entity.Folder;
+import auto.annotate.domain.folder.repository.FolderRepository;
 import auto.annotate.domain.highlight.overlay.HighlightMark;
 import auto.annotate.domain.highlight.overlay.PdfOverlayRenderer;
 import auto.annotate.domain.highlight.service.HighlightService;
@@ -30,6 +33,7 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.core.io.FileSystemResource;
 import org.springframework.core.io.Resource;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.multipart.MultipartFile;
 
 import java.io.IOException;
@@ -53,12 +57,14 @@ public class DocumentServiceImpl implements DocumentService {
     private final HighlightService highlightService;
     private final SurgeryTokenMatcher surgeryTokenMatcher;
     private final UserRepository userRepository;
+    private final FolderRepository folderRepository;
 
     @Value("${pdf.file.upload-dir}")
     private String uploadDir;
 
+    @Transactional
     @Override
-    public List<Document> save(List<MultipartFile> multipartFiles, AuthUser authUser) {
+    public List<Document> save(List<MultipartFile> multipartFiles, AuthUser authUser, SaveFolderRequest saveFolderRequest) {
         User user  =  getUser(authUser.getId());
 
         String bundleKey = java.util.UUID.randomUUID().toString();
@@ -104,12 +110,16 @@ public class DocumentServiceImpl implements DocumentService {
                 continue;
             }
 
+            Folder folder = new Folder(saveFolderRequest.getName(), user);
+            folderRepository.save(folder);
+
             Document document = new Document(
                     originalFilename,
                     storedFilename,
                     bundleKey,
                     target,
-                    user
+                    user,
+                    folder
             );
 
             Document savedDocument = documentRepository.save(document);
