@@ -1,0 +1,99 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8">
+  <title>회원가입</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+</head>
+<body class="bg-gray-100 flex flex-col min-h-screen">
+
+
+  <div class="container mx-auto flex justify-between">
+      <a href="/login.html" class="text-white px-4">로그인</a>
+  </div>
+
+
+<div class="flex items-center justify-center flex-grow">
+  <div class="bg-white p-6 rounded shadow-md max-w-sm w-full">
+    <h1 class="text-2xl font-bold mb-6 text-center text-gray-800">회원가입</h1>
+
+    <form id="signupForm" class="space-y-4">
+      <div>
+        <input type="email" id="email"
+               placeholder="이메일을 입력해주세요."
+               class="w-full px-3 py-2 border rounded"
+               required>
+        <p id="emailError" class="text-red-500 text-sm hidden"></p>
+      </div>
+
+      <div>
+        <input type="text" id="nickName"
+               placeholder="닉네임을 입력해주세요."
+               class="w-full px-3 py-2 border rounded"
+               required>
+        <p id="nickNameError" class="text-red-500 text-sm hidden"></p>
+      </div>
+
+      <div>
+        <input type="password" id="password"
+               placeholder="비밀번호를 입력해주세요."
+               class="w-full px-3 py-2 border rounded"
+               required>
+        <p id="passwordError" class="text-red-500 text-sm hidden"></p>
+      </div>
+
+      <button type="submit"
+              class="w-full py-2 bg-green-500 text-white font-semibold rounded hover:bg-green-600">
+        가입 완료
+      </button>
+    </form>
+  </div>
+</div>
+
+<script>
+  document.getElementById("signupForm").addEventListener("submit", async function (e) {
+    e.preventDefault();
+
+    const email = document.getElementById("email").value;
+    const nickName = document.getElementById("nickName").value;
+    const password = document.getElementById("password").value;
+
+    const emailError = document.getElementById("emailError");
+    const nickNameError = document.getElementById("nickNameError");
+    const passwordError = document.getElementById("passwordError");
+
+    emailError.classList.add("hidden");
+    nickNameError.classList.add("hidden");
+    passwordError.classList.add("hidden");
+
+    try {
+      const response = await fetch("/api/v1/users/sign-up", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json"
+        },
+        body: JSON.stringify({
+          email: email,
+          nickName: nickName,
+          password: password
+        })
+      });
+      alert("회원가입이 완료되었습니다.\n로그인 페이지로 이동합니다.");
+
+
+      if (!response.ok) {
+        throw new Error("SIGNUP_FAILED");
+      }
+
+      window.location.href = "/login.html";
+
+    } catch (e) {
+      console.log(e.message)
+      passwordError.textContent = "회원가입에 실패했습니다. 입력값을 확인해주세요.";
+      passwordError.classList.remove("hidden");
+    }
+  });
+</script>
+
+</body>
+</html>
