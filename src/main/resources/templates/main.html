@@ -109,7 +109,22 @@
             <!-- 초기 상태: 업로드 안내 -->
             <div class="upload-center">
                 <p>PDF 파일을 업로드해 주세요.</p>
-                <button type="button">파일 업로드</button>
+
+                <input
+                        type="text"
+                        id="folderName"
+                        placeholder="폴더 이름"
+                        style="margin-bottom: 8px;"
+                />
+
+                <input
+                        type="file"
+                        id="fileInput"
+                        multiple
+                        style="display: none;"
+                />
+
+                <button type="button" id="uploadBtn">파일 업로드</button>
             </div>
 
             <!-- 업로드 완료 후 상태 -->
@@ -136,19 +151,16 @@
     </main>
 </div>
 <script>
-    // 공통: 토큰 가져오기
     function getAccessToken() {
         return localStorage.getItem("accessToken");
     }
 
-    // 공통: 인증 실패 처리
     function handleUnauthorized() {
         alert("인증이 만료되었습니다.");
         localStorage.removeItem("accessToken");
         window.location.href = "/login";
     }
 
-    // 1. 페이지 진입 시 로그인 여부 + 서버 인증 확인
     async function checkAuthAndLoadProfile() {
         const token = getAccessToken();
 
@@ -159,12 +171,11 @@
         }
 
         const response = await fetch("/api/v1/users/me/profile", {
-
             headers: {
                 Authorization: `Bearer ${token}`
             }
         });
-        console.log(response)
+
         if (response.status === 401) {
             handleUnauthorized();
             return;
@@ -179,7 +190,6 @@
         console.log("환영합니다,", userData.username);
     }
 
-    // 2. 로그아웃
     function bindLogoutButton() {
         const logoutBtn = document.querySelector("header button");
         if (!logoutBtn) return;
@@ -190,20 +200,29 @@
         });
     }
 
-    // 3. 파일 업로드 (JWT 필요 API)
-    async function uploadFile(file) {
+    async function uploadFiles(files, folderName) {
         const token = getAccessToken();
-
         if (!token) {
             handleUnauthorized();
             return;
         }
 
         const formData = new FormData();
-        formData.append("file", file);
+
+        for (const file of files) {
+            formData.append("documents", file);
+        }
+
+        formData.append(
+            "saveFolderRequest",
+            new Blob(
+                [JSON.stringify({ name: folderName })],
+                { type: "application/json" }
+            )
+        );
 
         try {
-            const response = await fetch("/api/v1/pdf/upload", {
+            const response = await fetch("/api/v1/document/upload", {
                 method: "POST",
                 headers: {
                     Authorization: `Bearer ${token}`
@@ -221,16 +240,51 @@
                 return;
             }
 
-            // 업로드 성공 후 처리
-        } catch (error) {
-            console.error("업로드 중 오류 발생:", error);
+            console.log("업로드 성공");
+
+            document.querySelector(".upload-center").style.display = "none";
+            document.querySelector(".result-area").style.display = "block";
+
+        } catch (e) {
+            console.error("업로드 오류", e);
         }
     }
 
-    // 초기 실행
     window.addEventListener("load", () => {
         checkAuthAndLoadProfile();
         bindLogoutButton();
+
+        const uploadBtn = document.getElementById("uploadBtn");
+        const fileInput = document.getElementById("fileInput");
+        const folderInput = document.getElementById("folderName");
+
+        uploadBtn.addEventListener("click", () => {
+            const folderName = folderInput.value.trim();
+
+            if (!folderName) {
+                alert("폴더 이름을 입력해주세요.");
+                return;
+            }
+
+            fileInput.click();
+        });
+
+        fileInput.addEventListener("change", () => {
+            const folderName = folderInput.value.trim();
+
+            if (!folderName) {
+                alert("폴더 이름을 입력해주세요.");
+                fileInput.value = "";
+                return;
+            }
+
+            if (!fileInput.files.length) return;
+
+            uploadFiles(fileInput.files, folderName);
+
+            // 같은 파일 재업로드 가능하게 초기화
+            fileInput.value = "";
+        });
     });
 </script>
 </body>

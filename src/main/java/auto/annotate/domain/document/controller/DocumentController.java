@@ -29,7 +29,7 @@ import java.util.UUID;
 @RequiredArgsConstructor
 @Slf4j
 @SessionAttributes("uploadedFiles")
-@RequestMapping("/document")
+@RequestMapping("/api/v1/document")
 public class DocumentController {
 
     private final DocumentService documentService;
@@ -41,7 +41,7 @@ public class DocumentController {
     public ResponseEntity<ApiResponse<Void>> fileUpLoad(
             @RequestPart("documents") List<MultipartFile> multipartFile,
             @Auth AuthUser authUser,
-            @RequestBody SaveFolderRequest saveFolderRequest
+            @RequestPart("saveFolderRequest") SaveFolderRequest saveFolderRequest
             ){
         if (multipartFile.isEmpty()) {
             throw new BaseException(ExceptionEnum.DOCUMENT_NOT_FOUND);

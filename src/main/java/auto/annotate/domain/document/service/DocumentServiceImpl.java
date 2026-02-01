@@ -41,6 +41,7 @@ import java.io.OutputStream;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
+import java.time.LocalDateTime;
 import java.util.*;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
@@ -64,36 +65,48 @@ public class DocumentServiceImpl implements DocumentService {
 
     @Transactional
     @Override
-    public List<Document> save(List<MultipartFile> multipartFiles, AuthUser authUser, SaveFolderRequest saveFolderRequest) {
-        User user  =  getUser(authUser.getId());
+    public List<Document> save(
+            List<MultipartFile> multipartFiles,
+            AuthUser authUser,
+            SaveFolderRequest saveFolderRequest
+    ) {
+        User user = getUser(authUser.getId());
 
-        String bundleKey = java.util.UUID.randomUUID().toString();
+        String bundleKey = UUID.randomUUID().toString();
         List<Document> savedDocuments = new ArrayList<>();
-        // 1. 파일 시스템 저장 경로 준비 및 고유 식별자 (ID) 결정
+
         Path uploadPath = Paths.get(uploadDir).toAbsolutePath().normalize();
         if (!Files.exists(uploadPath)) {
             try {
                 Files.createDirectories(uploadPath);
             } catch (IOException e) {
-                // 디렉터리 생성 실패 시 처리 (옵션)
-                throw new RuntimeException("Could not create upload directory!", e);
+                throw new BaseException(ExceptionEnum.UPLOAD_DIRECTORY_CREATE_FAILED);
             }
         }
 
+        // 폴더 이름은 사용자가 반드시 지정
+        if (saveFolderRequest == null || saveFolderRequest.getName() == null) {
+            throw new BaseException(ExceptionEnum.INVALID_FOLDER_NAME);
+        }
+
+        // 폴더는 요청당 한 번만 생성
+        Folder folder = new Folder(
+                saveFolderRequest.getName(),
+                user
+        );
+        folderRepository.save(folder);
 
         for (MultipartFile multipartFile : multipartFiles) {
-            // 파일이 비어있는 경우(null이거나 크기가 0) 건너뜁니다.
             if (multipartFile == null || multipartFile.isEmpty()) {
                 continue;
             }
 
             UUID id = UUID.randomUUID();
             String originalFilename = multipartFile.getOriginalFilename();
-            String storedFilename = id.toString() + ".pdf";
+            String storedFilename = id + ".pdf";
 
             Path targetLocation = uploadPath.resolve(storedFilename);
 
-            // 2. 디스크에 파일 저장
             try {
                 Files.copy(multipartFile.getInputStream(), targetLocation);
             } catch (IOException e) {
@@ -102,16 +115,12 @@ public class DocumentServiceImpl implements DocumentService {
 
             HighlightTarget target = detectHighlightTargetFromFile(targetLocation);
 
-            // 이미 같은 target 문서가 있으면 저장하지 않음
             boolean alreadyExists = savedDocuments.stream()
                     .anyMatch(d -> d.getTarget() == target);
 
             if (alreadyExists) {
                 continue;
             }
-
-            Folder folder = new Folder(saveFolderRequest.getName(), user);
-            folderRepository.save(folder);
 
             Document document = new Document(
                     originalFilename,
@@ -122,12 +131,10 @@ public class DocumentServiceImpl implements DocumentService {
                     folder
             );
 
-            Document savedDocument = documentRepository.save(document);
-            savedDocuments.add(savedDocument);
+            savedDocuments.add(documentRepository.save(document));
         }
         return savedDocuments;
     }
-
 
     /**
      * GET /document/{id}/highlighted

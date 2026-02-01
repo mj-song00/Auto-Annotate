@@ -11,6 +11,8 @@ public enum ExceptionEnum {
     INTERNAL_SERVER_ERROR(HttpStatus.INTERNAL_SERVER_ERROR, "INTERNAL_SERVER_ERROR",
             "서버에서 문제가 발생하였습니다."),
 
+    UPLOAD_DIRECTORY_CREATE_FAILED(HttpStatus.BAD_REQUEST,"UPLOAD_DIRECTORY_CREATE_FAILED", "파일 업로드 디렉터리를 생성할 수 없습니다."),
+    INVALID_FOLDER_NAME(HttpStatus.BAD_REQUEST,"INVALID_FOLDER_NAME","폴더 이름을 확인해주세요"),
 
     DOCUMENT_NOT_FOUND(HttpStatus.BAD_REQUEST,"DOCUMENT_NOT_FOUND","첨부파일을 확인해 주세요"),
     FILE_READ_ERROR(HttpStatus.BAD_REQUEST, "FILE_READ_ERROR", "pdf를 읽는 중 오류가 발생하였습니다"),
