@@ -8,7 +8,7 @@ import auto.annotate.common.response.ApiResponse;
 import auto.annotate.common.response.ApiResponseEnum;
 import auto.annotate.domain.document.repository.DocumentRepository;
 import auto.annotate.domain.document.service.DocumentService;
-import auto.annotate.domain.folder.dto.SaveFolderRequest;
+import auto.annotate.domain.folder.dto.request.SaveFolderRequest;
 import auto.annotate.domain.user.dto.AuthUser;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;

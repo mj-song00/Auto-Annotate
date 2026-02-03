@@ -1,4 +1,4 @@
-package auto.annotate.domain.folder.dto;
+package auto.annotate.domain.folder.dto.request;
 
 import jakarta.validation.constraints.NotBlank;
 import lombok.Getter;

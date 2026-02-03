@@ -1,7 +1,7 @@
 package auto.annotate.domain.document.service;
 
 import auto.annotate.domain.document.entity.Document;
-import auto.annotate.domain.folder.dto.SaveFolderRequest;
+import auto.annotate.domain.folder.dto.request.SaveFolderRequest;
 import auto.annotate.domain.user.dto.AuthUser;
 import org.springframework.core.io.Resource;
 import org.springframework.web.multipart.MultipartFile;
