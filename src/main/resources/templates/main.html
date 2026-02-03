@@ -81,6 +81,25 @@
             display: block;
             margin-bottom: 8px;
         }
+
+        /*.layout {*/
+        /*    display: flex;*/
+        /*    height: 100vh;*/
+        /*}*/
+
+        /*.sidebar {*/
+        /*    width: 260px;*/
+        /*    border-right: 1px solid #e5e7eb;*/
+        /*    padding: 12px;*/
+        /*    overflow-y: auto;*/
+        /*    background-color: #f9fafb;*/
+        /*}*/
+
+        /*.content {*/
+        /*    flex: 1;*/
+        /*    padding: 20px;*/
+        /*    overflow-y: auto;*/
+        /*}*/
     </style>
 </head>
 
@@ -93,18 +112,17 @@
         <button type="button">로그아웃</button>
     </header>
 
-    <main>
+    <main class="layout">
 
-        <!-- 왼쪽: 폴더 영역 (초기엔 비어 있음) -->
-        <aside>
-            <ul class="folder-list">
-                <!-- 업로드 후 폴더 이름이 여기에 추가됨 -->
-                <!-- <li class="active">2026-01</li> -->
+        <!-- 왼쪽: 폴더 영역 -->
+        <aside class="sidebar">
+            <ul id="folderList" class="folder-list">
+                <!-- JS로 폴더 li 추가 -->
             </ul>
         </aside>
 
         <!-- 오른쪽: 콘텐츠 영역 -->
-        <section id="content">
+        <section id="content" class="content">
 
             <!-- 초기 상태: 업로드 안내 -->
             <div class="upload-center">
@@ -161,12 +179,20 @@
         window.location.href = "/login";
     }
 
-    async function checkAuthAndLoadProfile() {
+    async function checkAuth(){
         const token = getAccessToken();
 
         if (!token || token.trim() === "") {
             alert("로그인이 필요합니다.");
             window.location.href = "/login";
+            return;
+        }
+    }
+
+    async function LoadProfile() {
+        const token = getAccessToken();
+        if (!token) {
+            handleUnauthorized();
             return;
         }
 
@@ -185,9 +211,6 @@
             console.error("프로필 조회 실패", response.status);
             return;
         }
-
-        const userData = await response.json();
-        console.log("환영합니다,", userData.username);
     }
 
     function bindLogoutButton() {
@@ -250,9 +273,54 @@
         }
     }
 
+    //폴더 목록 불러오기
+    async function getFolders() {
+        const token = getAccessToken();
+        if (!token) {
+            handleUnauthorized();
+            return;
+        }
+
+        try {
+            const response = await fetch("/api/v1/folder", {
+                method: "GET",
+                headers: {
+                    Authorization: `Bearer ${token}`
+                },
+            });
+
+            if (response.status === 401) {
+                handleUnauthorized();
+                return;
+            }
+
+            const folders = await response.json();
+
+            const folderList = document.getElementById("folderList");
+            folderList.innerHTML = "";
+
+            folders.forEach(folder => {
+                console.log("append folder:", folder.name);
+                const li = document.createElement("li");
+                li.textContent = folder.name;
+                li.dataset.folderId = folder.id;
+
+                li.onclick = () => loadFolder(folder.id);
+
+                folderList.appendChild(li);
+            });
+
+
+        } catch(e){
+            console.log(e)
+        }
+    }
+
     window.addEventListener("load", () => {
-        checkAuthAndLoadProfile();
+        checkAuth()
+        LoadProfile();
         bindLogoutButton();
+        getFolders()
 
         const uploadBtn = document.getElementById("uploadBtn");
         const fileInput = document.getElementById("fileInput");
