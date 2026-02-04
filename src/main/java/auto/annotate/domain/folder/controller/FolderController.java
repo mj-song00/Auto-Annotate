@@ -52,4 +52,19 @@ public class FolderController {
                 ApiResponseEnum.FOLDER_UPDATE_SUCCESS);
         return ResponseEntity.status(HttpStatus.OK).body(response);
     }
+
+    /**
+     * 사용자가 임의로 폴더를 삭제합니다.
+     * 폴더는 3일뒤 자정에 자동으로 삭제됩니다.
+     */
+    @DeleteMapping("/{folderId}")
+    public ResponseEntity<ApiResponse<Void>> deleteTitle(
+            @Auth AuthUser authUser,
+            @PathVariable UUID id
+    ){
+        folderService.deleteTitle(authUser, id);
+        ApiResponse<Void> response = ApiResponse.successWithOutData(
+                ApiResponseEnum.FOLDER_DELETE_SUCCESS);
+        return ResponseEntity.status(HttpStatus.OK).body(response);
+    }
 }

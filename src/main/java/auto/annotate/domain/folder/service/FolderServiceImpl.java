@@ -40,23 +40,32 @@ public class FolderServiceImpl implements FolderService {
                     )
             );
         }
-
         return responses;
     }
 
     @Override
     public void modifyTitle(AuthUser authUser, UUID id, UpdateTitleRequest request) {
-        getUser(authUser.getId());
-
-        Folder folder = folderRepository.findByFolderId(id).orElseThrow(() -> new BaseException(ExceptionEnum.FOLDER_NOT_FOUND));
-
+        Folder folder = getFolder(authUser, id);
         folder.update(request.getName());
+        folderRepository.save(folder);
+    }
 
+    @Override
+    public void deleteTitle(AuthUser authUser, UUID id) {
+        Folder folder = getFolder(authUser, id);
+        folder.delete();
         folderRepository.save(folder);
     }
 
     private User getUser(UUID id) {
         return userRepository.findById(id)
                 .orElseThrow(() -> new BaseException(ExceptionEnum.USER_NOT_FOUND));
+    }
+
+    private Folder getFolder(AuthUser authUser, UUID id) {
+        getUser(authUser.getId());
+
+        return folderRepository.findByFolderId(id)
+                .orElseThrow(() -> new BaseException(ExceptionEnum.FOLDER_NOT_FOUND));
     }
 }

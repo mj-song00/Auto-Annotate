@@ -11,7 +11,8 @@ public enum ApiResponseEnum {
     NICKNAME_CHANGED_SUCCESS("닉네임 변경 완료"),
     USER_DELETED_SUCCESS("회원 탈퇴가 완료"),
     GET_FOLDER_SUCCESS("폴더 조회 완료"),
-    FOLDER_UPDATE_SUCCESS("폴더 수정 완료");
+    FOLDER_UPDATE_SUCCESS("폴더 수정 완료"),
+    FOLDER_DELETE_SUCCESS("폴더 삭제 완료");
 
     private final String message;
 

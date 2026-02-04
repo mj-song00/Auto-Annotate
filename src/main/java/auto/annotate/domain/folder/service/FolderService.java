@@ -11,4 +11,6 @@ public interface FolderService {
     List<FolderResponse> getFolders(AuthUser authUser);
 
     void modifyTitle(AuthUser authUser, UUID id, UpdateTitleRequest request);
+
+    void deleteTitle(AuthUser authUser, UUID id);
 }
