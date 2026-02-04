@@ -2,6 +2,7 @@ package auto.annotate.domain.folder.service;
 
 import auto.annotate.common.exception.BaseException;
 import auto.annotate.common.exception.ExceptionEnum;
+import auto.annotate.domain.folder.dto.request.UpdateTitleRequest;
 import auto.annotate.domain.folder.dto.response.FolderResponse;
 import auto.annotate.domain.folder.entity.Folder;
 import auto.annotate.domain.folder.repository.FolderRepository;
@@ -19,7 +20,7 @@ import java.util.UUID;
 @Service
 @Slf4j
 @RequiredArgsConstructor
-public class FolderServiceImpl implements FolderService{
+public class FolderServiceImpl implements FolderService {
 
     private final UserRepository userRepository;
     private final FolderRepository folderRepository;
@@ -41,6 +42,17 @@ public class FolderServiceImpl implements FolderService{
         }
 
         return responses;
+    }
+
+    @Override
+    public void modifyTitle(AuthUser authUser, UUID id, UpdateTitleRequest request) {
+        getUser(authUser.getId());
+
+        Folder folder = folderRepository.findByFolderId(id).orElseThrow(() -> new BaseException(ExceptionEnum.FOLDER_NOT_FOUND));
+
+        folder.update(request.getName());
+
+        folderRepository.save(folder);
     }
 
     private User getUser(UUID id) {

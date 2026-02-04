@@ -31,7 +31,12 @@ public enum ExceptionEnum {
 
 
     // 리프레시 토큰 관련
-    INVALID_REFRESH_TOKEN(HttpStatus.UNAUTHORIZED, "INVALID_REFRESH_TOKEN", "잘못된 리프레시 토큰입니다.");
+    INVALID_REFRESH_TOKEN(HttpStatus.UNAUTHORIZED, "INVALID_REFRESH_TOKEN", "잘못된 리프레시 토큰입니다."),
+
+
+    FOLDER_NOT_FOUND(HttpStatus.NOT_FOUND,"FOLDER_NOT_FOUND","폴더를 찾을 수 없습니다." );
+
+
     private final HttpStatus status;
     private final String errorCode;
     private final String message;

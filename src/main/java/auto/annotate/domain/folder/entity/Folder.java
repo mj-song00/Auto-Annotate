@@ -36,4 +36,8 @@ public class Folder extends Timestamped {
         this.name = name;
         this.user = user;
     }
+
+    public void update(String name) {
+        this.name = name;
+    }
 }
