@@ -82,24 +82,44 @@
             margin-bottom: 8px;
         }
 
-        /*.layout {*/
-        /*    display: flex;*/
-        /*    height: 100vh;*/
-        /*}*/
+        .folder-item {
+            display: flex;
+            align-items: center;
+            position: relative;
+        }
 
-        /*.sidebar {*/
-        /*    width: 260px;*/
-        /*    border-right: 1px solid #e5e7eb;*/
-        /*    padding: 12px;*/
-        /*    overflow-y: auto;*/
-        /*    background-color: #f9fafb;*/
-        /*}*/
+        .folder-actions {
+            opacity: 0;
+            visibility: hidden;
+            margin-left: auto;
+            cursor: pointer;
+        }
 
-        /*.content {*/
-        /*    flex: 1;*/
-        /*    padding: 20px;*/
-        /*    overflow-y: auto;*/
-        /*}*/
+        .folder-item:hover .folder-actions {
+            opacity: 1;
+            visibility: visible;
+        }
+
+        .folder-menu {
+            position: absolute;
+            right: 0;
+            top: 22px;
+            border: 1px solid #ddd;
+            background: #fff;
+            display: none;
+            z-index: 10;
+        }
+
+        .folder-menu div {
+            padding: 6px 12px;
+            cursor: pointer;
+        }
+
+        .folder-menu div:hover {
+            background: #f5f5f5;
+        }
+
+
     </style>
 </head>
 
@@ -294,26 +314,91 @@
                 return;
             }
 
-            const folders = await response.json();
+            const result = await response.json();
+            const folders = result.data;
 
             const folderList = document.getElementById("folderList");
             folderList.innerHTML = "";
 
             folders.forEach(folder => {
-                console.log("append folder:", folder.name);
                 const li = document.createElement("li");
-                li.textContent = folder.name;
-                li.dataset.folderId = folder.id;
+                li.className = "folder-item";
 
-                li.onclick = () => loadFolder(folder.id);
+                const nameSpan = document.createElement("span");
+                nameSpan.textContent = folder.name;
+                nameSpan.onclick = () => loadFolder(folder.id);
 
+                const actions = document.createElement("span");
+                actions.className = "folder-actions";
+                actions.textContent = "⋯";
+
+                const menu = document.createElement("div");
+                menu.className = "folder-menu";
+
+                menu.addEventListener("click", (e) => {
+                    e.stopPropagation();
+                });
+
+                const editItem = document.createElement("div");
+                editItem.textContent = "수정";
+                editItem.onclick = (e) => {
+                    e.stopPropagation();
+                    closeAllMenus();
+                    editFolder(folder.id, folder.name);
+                };
+
+                const deleteItem = document.createElement("div");
+                deleteItem.textContent = "삭제";
+                deleteItem.onclick = (e) => {
+                    e.stopPropagation();
+                    closeAllMenus();
+                    deleteFolder(folder.id);
+                };
+
+                menu.appendChild(editItem);
+                menu.appendChild(deleteItem);
+
+                actions.onclick = (e) => {
+                    e.stopPropagation();
+                    const isOpen = menu.style.display === "block";
+                    closeAllMenus();
+                    menu.style.display = isOpen ? "none" : "block";
+                };
+
+                li.appendChild(nameSpan);
+                li.appendChild(actions);
+                li.appendChild(menu);
                 folderList.appendChild(li);
             });
 
 
-        } catch(e){
-            console.log(e)
+            // 바깥 클릭 시 메뉴 닫기
+            document.addEventListener("click", () => {
+                document.querySelectorAll(".folder-menu").forEach(m => {
+                    m.style.display = "none";
+                });
+            });
+
+        } catch (e) {
+            console.log(e);
         }
+    }
+
+    function addFolder(name) {
+        const folderList = document.getElementById("folderList");
+
+        const li = document.createElement("li");
+        li.textContent = name;
+        li.classList.add("folder-item");
+
+        // 최신 폴더를 위로
+        folderList.prepend(li);
+    }
+
+    function closeAllMenus() {
+        document.querySelectorAll(".folder-menu").forEach(menu => {
+            menu.style.display = "none";
+        });
     }
 
     window.addEventListener("load", () => {
@@ -321,6 +406,7 @@
         LoadProfile();
         bindLogoutButton();
         getFolders()
+        addFolder(name)
 
         const uploadBtn = document.getElementById("uploadBtn");
         const fileInput = document.getElementById("fileInput");
