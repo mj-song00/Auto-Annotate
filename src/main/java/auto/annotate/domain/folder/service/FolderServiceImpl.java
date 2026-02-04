@@ -29,7 +29,7 @@ public class FolderServiceImpl implements FolderService {
     public List<FolderResponse> getFolders(AuthUser authUser) {
         User user = getUser(authUser.getId());
 
-        List<Folder> folders = folderRepository.findByUserId(user.getId());
+        List<Folder> folders = folderRepository.findByUser(user);
         List<FolderResponse> responses = new ArrayList<>();
 
         for (Folder folder : folders) {
@@ -65,7 +65,7 @@ public class FolderServiceImpl implements FolderService {
     private Folder getFolder(AuthUser authUser, UUID id) {
         getUser(authUser.getId());
 
-        return folderRepository.findByFolderId(id)
+        return folderRepository.findById(id)
                 .orElseThrow(() -> new BaseException(ExceptionEnum.FOLDER_NOT_FOUND));
     }
 }
