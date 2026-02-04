@@ -36,18 +36,18 @@ public class FolderController {
     /**
      * 폴더 제목을 수정합니다. 필요한 값으로는
      * @param authUser (로그인 확인용)
-     * @param id (폴더 id)
+     * @param folderId (폴더 id)
      * @param request 를 받습니다.
      * @return void 입니다.
      */
     @PutMapping("/{folderId}")
     public ResponseEntity<ApiResponse<Void>>  modfiyTitle(
             @Auth AuthUser authUser,
-            @PathVariable UUID id,
+            @PathVariable UUID folderId,
             @RequestBody UpdateTitleRequest request
 
     ){
-        folderService.modifyTitle(authUser, id, request);
+        folderService.modifyTitle(authUser, folderId, request);
         ApiResponse<Void> response = ApiResponse.successWithOutData(
                 ApiResponseEnum.FOLDER_UPDATE_SUCCESS);
         return ResponseEntity.status(HttpStatus.OK).body(response);
@@ -60,9 +60,9 @@ public class FolderController {
     @DeleteMapping("/{folderId}")
     public ResponseEntity<ApiResponse<Void>> deleteTitle(
             @Auth AuthUser authUser,
-            @PathVariable UUID id
+            @PathVariable UUID folderId
     ){
-        folderService.deleteTitle(authUser, id);
+        folderService.deleteTitle(authUser, folderId);
         ApiResponse<Void> response = ApiResponse.successWithOutData(
                 ApiResponseEnum.FOLDER_DELETE_SUCCESS);
         return ResponseEntity.status(HttpStatus.OK).body(response);

@@ -9,7 +9,8 @@ import java.util.Optional;
 import java.util.UUID;
 
 public interface FolderRepository extends JpaRepository<Folder,UUID> {
-    List<Folder> findByUser(User user);
 
     Optional<Folder> findById(UUID id);
+
+    List<Folder> findByUserAndDeletedAtIsNull(User user);
 }

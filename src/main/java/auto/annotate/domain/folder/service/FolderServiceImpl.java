@@ -29,7 +29,7 @@ public class FolderServiceImpl implements FolderService {
     public List<FolderResponse> getFolders(AuthUser authUser) {
         User user = getUser(authUser.getId());
 
-        List<Folder> folders = folderRepository.findByUser(user);
+        List<Folder> folders = folderRepository.findByUserAndDeletedAtIsNull(user);
         List<FolderResponse> responses = new ArrayList<>();
 
         for (Folder folder : folders) {

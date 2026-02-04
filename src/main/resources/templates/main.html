@@ -344,7 +344,7 @@
                 editItem.onclick = (e) => {
                     e.stopPropagation();
                     closeAllMenus();
-                    editFolder(folder.id, folder.name);
+                    editFolder(folder.id, folder.name, li);
                 };
 
                 const deleteItem = document.createElement("div");
@@ -399,6 +399,91 @@
         document.querySelectorAll(".folder-menu").forEach(menu => {
             menu.style.display = "none";
         });
+    }
+
+    function editFolder(folderId, currentName, li) {
+        const nameSpan = li.querySelector("span");
+        const actions = li.querySelector(".folder-actions");
+
+        const input = document.createElement("input");
+        input.type = "text";
+        input.value = currentName;
+        input.style.width = "100%";
+        input.style.boxSizing = "border-box";
+
+        nameSpan.style.display = "none";
+        actions.style.display = "none";
+
+        li.insertBefore(input, actions);
+        input.focus();
+        input.select();
+
+        const cleanup = () => {
+            input.remove();
+            nameSpan.style.display = "";
+            actions.style.display = "";
+        };
+
+        const submit = async () => {
+            const newName = input.value.trim();
+
+            if (!newName || newName === currentName) {
+                cleanup();
+                return;
+            }
+
+            await updateFolderName(folderId, newName);
+            nameSpan.textContent = newName;
+            cleanup();
+        };
+
+        input.addEventListener("keydown", (e) => {
+            if (e.key === "Enter") submit();
+            if (e.key === "Escape") cleanup();
+        });
+
+        input.addEventListener("blur", submit);
+    }
+
+    async function updateFolderName(folderId, name) {
+        const token = getAccessToken();
+
+        const response = await fetch(`/api/v1/folder/${folderId}`, {
+            method: "PUT",
+            headers: {
+                "Content-Type": "application/json",
+                Authorization: `Bearer ${token}`
+            },
+            body: JSON.stringify({ name })
+        });
+
+
+        if (response.status === 401) {
+            handleUnauthorized();
+            return;
+        }
+
+        if (!response.ok) {
+            alert("폴더 삭제 실패");
+            return;
+        }
+
+        await getFolders();
+    }
+
+    async function deleteFolder(folderId){
+        const token = getAccessToken();
+
+        if (!confirm("폴더를 삭제하시겠습니까?")) return;
+
+        await fetch(`/api/v1/folder/${folderId}`,
+            {
+            method: "DELETE",
+            headers:{
+                "Content-Type": "application/json",
+                Authorization: `Bearer ${token}`
+            }
+        })
     }
 
     window.addEventListener("load", () => {
