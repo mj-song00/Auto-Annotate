@@ -91,7 +91,7 @@ public class DocumentController {
     }
 
     @GetMapping("/{documentId}/excel")
-    public ResponseEntity<Resource> downloadVisitOver7DaysExcel(
+    public ResponseEntity<Resource> downloadExcelByCondition(
             @PathVariable UUID documentId,
             @RequestParam int condition
     ) {
