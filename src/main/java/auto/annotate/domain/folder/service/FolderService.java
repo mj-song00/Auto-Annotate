@@ -1,6 +1,7 @@
 package auto.annotate.domain.folder.service;
 
 import auto.annotate.domain.folder.dto.request.UpdateTitleRequest;
+import auto.annotate.domain.folder.dto.response.FolderDocumentResponse;
 import auto.annotate.domain.folder.dto.response.FolderResponse;
 import auto.annotate.domain.user.dto.AuthUser;
 
@@ -13,4 +14,6 @@ public interface FolderService {
     void modifyTitle(AuthUser authUser, UUID id, UpdateTitleRequest request);
 
     void deleteTitle(AuthUser authUser, UUID id);
+
+    List<FolderDocumentResponse> getDocuments(AuthUser authUser, UUID folderId);
 }

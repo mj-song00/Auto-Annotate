@@ -13,4 +13,6 @@ public interface FolderRepository extends JpaRepository<Folder,UUID> {
     Optional<Folder> findById(UUID id);
 
     List<Folder> findByUserAndDeletedAtIsNull(User user);
+
+    Optional<Folder> findByIdAndDeletedAtIsNull(UUID folderId);
 }

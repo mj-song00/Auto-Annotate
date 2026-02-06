@@ -4,6 +4,7 @@ import auto.annotate.common.annotation.Auth;
 import auto.annotate.common.response.ApiResponse;
 import auto.annotate.common.response.ApiResponseEnum;
 import auto.annotate.domain.folder.dto.request.UpdateTitleRequest;
+import auto.annotate.domain.folder.dto.response.FolderDocumentResponse;
 import auto.annotate.domain.folder.dto.response.FolderResponse;
 import auto.annotate.domain.folder.service.FolderService;
 import auto.annotate.domain.user.dto.AuthUser;
@@ -65,6 +66,18 @@ public class FolderController {
         folderService.deleteTitle(authUser, folderId);
         ApiResponse<Void> response = ApiResponse.successWithOutData(
                 ApiResponseEnum.FOLDER_DELETE_SUCCESS);
+        return ResponseEntity.status(HttpStatus.OK).body(response);
+    }
+
+    @GetMapping("/{folderId}/documents")
+    public ResponseEntity<ApiResponse<List<FolderDocumentResponse>>> getDocuments(
+            @Auth AuthUser authUser,
+            @PathVariable UUID folderId
+    ){
+        log.info("folderId = {}", folderId);
+        List<FolderDocumentResponse> result = folderService.getDocuments(authUser, folderId);
+        ApiResponse<List<FolderDocumentResponse>> response =
+                ApiResponse.successWithData(result, ApiResponseEnum.GET_FOLDER_SUCCESS);
         return ResponseEntity.status(HttpStatus.OK).body(response);
     }
 }

@@ -2,7 +2,10 @@ package auto.annotate.domain.folder.service;
 
 import auto.annotate.common.exception.BaseException;
 import auto.annotate.common.exception.ExceptionEnum;
+import auto.annotate.domain.document.entity.Document;
+import auto.annotate.domain.document.repository.DocumentRepository;
 import auto.annotate.domain.folder.dto.request.UpdateTitleRequest;
+import auto.annotate.domain.folder.dto.response.FolderDocumentResponse;
 import auto.annotate.domain.folder.dto.response.FolderResponse;
 import auto.annotate.domain.folder.entity.Folder;
 import auto.annotate.domain.folder.repository.FolderRepository;
@@ -16,6 +19,7 @@ import org.springframework.stereotype.Service;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.UUID;
+import java.util.stream.Collectors;
 
 @Service
 @Slf4j
@@ -24,6 +28,7 @@ public class FolderServiceImpl implements FolderService {
 
     private final UserRepository userRepository;
     private final FolderRepository folderRepository;
+    private final DocumentRepository documentRepository;
 
     @Override
     public List<FolderResponse> getFolders(AuthUser authUser) {
@@ -55,6 +60,24 @@ public class FolderServiceImpl implements FolderService {
         Folder folder = getFolder(authUser, id);
         folder.delete();
         folderRepository.save(folder);
+    }
+
+    @Override
+    public List<FolderDocumentResponse> getDocuments(AuthUser authUser, UUID folderId) {
+        User user = getUser(authUser.getId());
+
+        Folder folder = folderRepository.findByIdAndDeletedAtIsNull(folderId)
+                .orElseThrow(() -> new BaseException(ExceptionEnum.FOLDER_NOT_FOUND));
+
+
+        if (!folder.getUser().getId().equals(user.getId())) {
+            throw new BaseException(ExceptionEnum.USER_NOT_FOUND);
+        }
+
+        List<Document> documents = documentRepository.findALLByFolderId(folderId);
+        return documents.stream()
+                .map(FolderDocumentResponse::of)
+                .collect(Collectors.toList());
     }
 
     private User getUser(UUID id) {
