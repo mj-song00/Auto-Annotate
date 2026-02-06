@@ -2,529 +2,55 @@
 <head>
     <meta charset="UTF-8">
     <title>Highlight Automation</title>
-
-    <style>
-        html, body {
-            margin: 0;
-            height: 100%;
-        }
-
-        #app {
-            height: 100%;
-            display: flex;
-            flex-direction: column;
-        }
-
-        header {
-            height: 56px;
-            padding: 0 16px;
-            display: flex;
-            align-items: center;
-            justify-content: space-between;
-            border-bottom: 1px solid #ddd;
-            box-sizing: border-box;
-        }
-
-        main {
-            flex: 1;
-            display: flex;
-            min-height: 0;
-        }
-
-        aside {
-            width: 240px;
-            border-right: 1px solid #ddd;
-            padding: 16px;
-            box-sizing: border-box;
-        }
-
-        section#content {
-            flex: 1;
-            padding: 16px;
-            box-sizing: border-box;
-            overflow: auto;
-        }
-
-        ul.folder-list {
-            list-style: none;
-            padding: 0;
-            margin: 0;
-        }
-
-        ul.folder-list li {
-            padding: 6px 4px;
-            cursor: pointer;
-        }
-
-        ul.folder-list li.active {
-            font-weight: bold;
-        }
-
-        .upload-center {
-            height: 100%;
-            display: flex;
-            flex-direction: column;
-            justify-content: center;
-            align-items: center;
-            text-align: center;
-        }
-
-        .upload-center button {
-            margin-top: 12px;
-        }
-
-        .result-area {
-            display: none;
-        }
-
-        .download-buttons button {
-            display: block;
-            margin-bottom: 8px;
-        }
-
-        .folder-item {
-            display: flex;
-            align-items: center;
-            position: relative;
-        }
-
-        .folder-actions {
-            opacity: 0;
-            visibility: hidden;
-            margin-left: auto;
-            cursor: pointer;
-        }
-
-        .folder-item:hover .folder-actions {
-            opacity: 1;
-            visibility: visible;
-        }
-
-        .folder-menu {
-            position: absolute;
-            right: 0;
-            top: 22px;
-            border: 1px solid #ddd;
-            background: #fff;
-            display: none;
-            z-index: 10;
-        }
-
-        .folder-menu div {
-            padding: 6px 12px;
-            cursor: pointer;
-        }
-
-        .folder-menu div:hover {
-            background: #f5f5f5;
-        }
-
-
-    </style>
+    <link rel="stylesheet" href="/css/main.css">
 </head>
 
 <body>
-
 <div id="app">
-
     <header>
         <h1>Highlight Automation</h1>
         <button type="button">로그아웃</button>
     </header>
 
     <main class="layout">
-
-        <!-- 왼쪽: 폴더 영역 -->
         <aside class="sidebar">
-            <ul id="folderList" class="folder-list">
-                <!-- JS로 폴더 li 추가 -->
-            </ul>
+            <div class="sidebar-top">
+                <span id="newUploadBtn" class="new-upload-link">+ 새 업로드</span>
+            </div>
+            <ul id="folderList" class="folder-list"></ul>
         </aside>
 
-        <!-- 오른쪽: 콘텐츠 영역 -->
         <section id="content" class="content">
-
-            <!-- 초기 상태: 업로드 안내 -->
             <div class="upload-center">
                 <p>PDF 파일을 업로드해 주세요.</p>
 
-                <input
-                        type="text"
-                        id="folderName"
-                        placeholder="폴더 이름"
-                        style="margin-bottom: 8px;"
-                />
-
-                <input
-                        type="file"
-                        id="fileInput"
-                        multiple
-                        style="display: none;"
-                />
-
+                <input type="text" id="folderName" placeholder="폴더 이름" style="margin-bottom: 8px;" />
+                <input type="file" id="fileInput" multiple style="display: none;" />
                 <button type="button" id="uploadBtn">파일 업로드</button>
             </div>
 
-            <!-- 업로드 완료 후 상태 -->
             <div class="result-area">
                 <h2>다운로드</h2>
 
                 <div class="download-buttons">
-                    <button id="dl0" type="button" disabled>
-                        동일 병원 7일 이상 (엑셀)
+                    <button id="dl0" type="button" disabled data-condition="0">
+                        동일 코드 7일 이상 (엑셀)
                     </button>
-                    <button id="dl1" type="button" disabled>
+                    <button id="dl1" type="button" disabled data-condition="1">
                         30일 이상 복용 (엑셀)
                     </button>
-                    <button id="dl2" type="button" disabled>
+                    <button id="dl2" type="button" disabled data-condition="2">
                         입원 (엑셀)
                     </button>
-                    <button id="dl3" type="button" disabled>
+                    <button id="dl3" type="button" disabled data-condition="3">
                         수술 (엑셀)
                     </button>
                 </div>
             </div>
-
         </section>
     </main>
 </div>
-<script>
-    function getAccessToken() {
-        return localStorage.getItem("accessToken");
-    }
 
-    function handleUnauthorized() {
-        alert("인증이 만료되었습니다.");
-        localStorage.removeItem("accessToken");
-        window.location.href = "/login";
-    }
-
-    async function checkAuth(){
-        const token = getAccessToken();
-
-        if (!token || token.trim() === "") {
-            alert("로그인이 필요합니다.");
-            window.location.href = "/login";
-            return;
-        }
-    }
-
-    async function LoadProfile() {
-        const token = getAccessToken();
-        if (!token) {
-            handleUnauthorized();
-            return;
-        }
-
-        const response = await fetch("/api/v1/users/me/profile", {
-            headers: {
-                Authorization: `Bearer ${token}`
-            }
-        });
-
-        if (response.status === 401) {
-            handleUnauthorized();
-            return;
-        }
-
-        if (!response.ok) {
-            console.error("프로필 조회 실패", response.status);
-            return;
-        }
-    }
-
-    function bindLogoutButton() {
-        const logoutBtn = document.querySelector("header button");
-        if (!logoutBtn) return;
-
-        logoutBtn.addEventListener("click", () => {
-            localStorage.removeItem("accessToken");
-            window.location.href = "/login";
-        });
-    }
-
-    async function uploadFiles(files, folderName) {
-        const token = getAccessToken();
-        if (!token) {
-            handleUnauthorized();
-            return;
-        }
-
-        const formData = new FormData();
-
-        for (const file of files) {
-            formData.append("documents", file);
-        }
-
-        formData.append(
-            "saveFolderRequest",
-            new Blob(
-                [JSON.stringify({ name: folderName })],
-                { type: "application/json" }
-            )
-        );
-
-        try {
-            const response = await fetch("/api/v1/document/upload", {
-                method: "POST",
-                headers: {
-                    Authorization: `Bearer ${token}`
-                },
-                body: formData
-            });
-
-            if (response.status === 401) {
-                handleUnauthorized();
-                return;
-            }
-
-            if (!response.ok) {
-                console.error("업로드 실패", response.status);
-                return;
-            }
-
-            console.log("업로드 성공");
-
-            document.querySelector(".upload-center").style.display = "none";
-            document.querySelector(".result-area").style.display = "block";
-
-        } catch (e) {
-            console.error("업로드 오류", e);
-        }
-    }
-
-    //폴더 목록 불러오기
-    async function getFolders() {
-        const token = getAccessToken();
-        if (!token) {
-            handleUnauthorized();
-            return;
-        }
-
-        try {
-            const response = await fetch("/api/v1/folder", {
-                method: "GET",
-                headers: {
-                    Authorization: `Bearer ${token}`
-                },
-            });
-
-            if (response.status === 401) {
-                handleUnauthorized();
-                return;
-            }
-
-            const result = await response.json();
-            const folders = result.data;
-
-            const folderList = document.getElementById("folderList");
-            folderList.innerHTML = "";
-
-            folders.forEach(folder => {
-                const li = document.createElement("li");
-                li.className = "folder-item";
-
-                const nameSpan = document.createElement("span");
-                nameSpan.textContent = folder.name;
-                nameSpan.onclick = () => loadFolder(folder.id);
-
-                const actions = document.createElement("span");
-                actions.className = "folder-actions";
-                actions.textContent = "⋯";
-
-                const menu = document.createElement("div");
-                menu.className = "folder-menu";
-
-                menu.addEventListener("click", (e) => {
-                    e.stopPropagation();
-                });
-
-                const editItem = document.createElement("div");
-                editItem.textContent = "수정";
-                editItem.onclick = (e) => {
-                    e.stopPropagation();
-                    closeAllMenus();
-                    editFolder(folder.id, folder.name, li);
-                };
-
-                const deleteItem = document.createElement("div");
-                deleteItem.textContent = "삭제";
-                deleteItem.onclick = (e) => {
-                    e.stopPropagation();
-                    closeAllMenus();
-                    deleteFolder(folder.id);
-                };
-
-                menu.appendChild(editItem);
-                menu.appendChild(deleteItem);
-
-                actions.onclick = (e) => {
-                    e.stopPropagation();
-                    const isOpen = menu.style.display === "block";
-                    closeAllMenus();
-                    menu.style.display = isOpen ? "none" : "block";
-                };
-
-                li.appendChild(nameSpan);
-                li.appendChild(actions);
-                li.appendChild(menu);
-                folderList.appendChild(li);
-            });
-
-
-            // 바깥 클릭 시 메뉴 닫기
-            document.addEventListener("click", () => {
-                document.querySelectorAll(".folder-menu").forEach(m => {
-                    m.style.display = "none";
-                });
-            });
-
-        } catch (e) {
-            console.log(e);
-        }
-    }
-
-    function addFolder(name) {
-        const folderList = document.getElementById("folderList");
-
-        const li = document.createElement("li");
-        li.textContent = name;
-        li.classList.add("folder-item");
-
-        // 최신 폴더를 위로
-        folderList.prepend(li);
-    }
-
-    function closeAllMenus() {
-        document.querySelectorAll(".folder-menu").forEach(menu => {
-            menu.style.display = "none";
-        });
-    }
-
-    function editFolder(folderId, currentName, li) {
-        const nameSpan = li.querySelector("span");
-        const actions = li.querySelector(".folder-actions");
-
-        const input = document.createElement("input");
-        input.type = "text";
-        input.value = currentName;
-        input.style.width = "100%";
-        input.style.boxSizing = "border-box";
-
-        nameSpan.style.display = "none";
-        actions.style.display = "none";
-
-        li.insertBefore(input, actions);
-        input.focus();
-        input.select();
-
-        const cleanup = () => {
-            input.remove();
-            nameSpan.style.display = "";
-            actions.style.display = "";
-        };
-
-        const submit = async () => {
-            const newName = input.value.trim();
-
-            if (!newName || newName === currentName) {
-                cleanup();
-                return;
-            }
-
-            await updateFolderName(folderId, newName);
-            nameSpan.textContent = newName;
-            cleanup();
-        };
-
-        input.addEventListener("keydown", (e) => {
-            if (e.key === "Enter") submit();
-            if (e.key === "Escape") cleanup();
-        });
-
-        input.addEventListener("blur", submit);
-    }
-
-    async function updateFolderName(folderId, name) {
-        const token = getAccessToken();
-
-        const response = await fetch(`/api/v1/folder/${folderId}`, {
-            method: "PUT",
-            headers: {
-                "Content-Type": "application/json",
-                Authorization: `Bearer ${token}`
-            },
-            body: JSON.stringify({ name })
-        });
-
-
-        if (response.status === 401) {
-            handleUnauthorized();
-            return;
-        }
-
-        if (!response.ok) {
-            alert("폴더 삭제 실패");
-            return;
-        }
-
-        await getFolders();
-    }
-
-    async function deleteFolder(folderId){
-        const token = getAccessToken();
-
-        if (!confirm("폴더를 삭제하시겠습니까?")) return;
-
-        await fetch(`/api/v1/folder/${folderId}`,
-            {
-            method: "DELETE",
-            headers:{
-                "Content-Type": "application/json",
-                Authorization: `Bearer ${token}`
-            }
-        })
-    }
-
-    window.addEventListener("load", () => {
-        checkAuth()
-        LoadProfile();
-        bindLogoutButton();
-        getFolders()
-        addFolder(name)
-
-        const uploadBtn = document.getElementById("uploadBtn");
-        const fileInput = document.getElementById("fileInput");
-        const folderInput = document.getElementById("folderName");
-
-        uploadBtn.addEventListener("click", () => {
-            const folderName = folderInput.value.trim();
-
-            if (!folderName) {
-                alert("폴더 이름을 입력해주세요.");
-                return;
-            }
-
-            fileInput.click();
-        });
-
-        fileInput.addEventListener("change", () => {
-            const folderName = folderInput.value.trim();
-
-            if (!folderName) {
-                alert("폴더 이름을 입력해주세요.");
-                fileInput.value = "";
-                return;
-            }
-
-            if (!fileInput.files.length) return;
-
-            uploadFiles(fileInput.files, folderName);
-
-            // 같은 파일 재업로드 가능하게 초기화
-            fileInput.value = "";
-        });
-    });
-</script>
+<script src="/js/main.js"></script>
 </body>
 </html>

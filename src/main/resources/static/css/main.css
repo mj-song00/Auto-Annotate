@@ -1,0 +1,102 @@
+html, body { margin: 0; height: 100%; }
+#app { height: 100%; display: flex; flex-direction: column; }
+
+header {
+    height: 56px;
+    padding: 0 16px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    border-bottom: 1px solid #ddd;
+    box-sizing: border-box;
+}
+
+main { flex: 1; display: flex; min-height: 0; }
+
+aside {
+    width: 240px;
+    border-right: 1px solid #ddd;
+    padding: 16px;
+    box-sizing: border-box;
+}
+
+section#content {
+    flex: 1;
+    padding: 16px;
+    box-sizing: border-box;
+    overflow: auto;
+}
+
+ul.folder-list { list-style: none; padding: 0; margin: 0; }
+ul.folder-list li { padding: 6px 4px; cursor: pointer; }
+ul.folder-list li.active { font-weight: bold; }
+
+.upload-center {
+    height: 100%;
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    align-items: center;
+    text-align: center;
+}
+
+.upload-center button { margin-top: 12px; }
+
+.result-area { display: none; }
+
+.download-buttons button {
+    display: block;
+    margin-bottom: 8px;
+}
+
+.folder-item {
+    display: flex;
+    align-items: center;
+    position: relative;
+}
+
+.folder-actions {
+    opacity: 0;
+    visibility: hidden;
+    margin-left: auto;
+    cursor: pointer;
+}
+
+.folder-item:hover .folder-actions {
+    opacity: 1;
+    visibility: visible;
+}
+
+.folder-menu {
+    position: absolute;
+    right: 0;
+    top: 22px;
+    border: 1px solid #ddd;
+    background: #fff;
+    display: none;
+    z-index: 10;
+}
+
+.folder-menu div { padding: 6px 12px; cursor: pointer; }
+.folder-menu div:hover { background: #f5f5f5; }
+
+.sidebar-top {
+    display: flex;
+    gap: 8px;
+    margin-bottom: 12px;
+    align-items: center;
+}
+
+.new-upload-link {
+    font-size: 13px;
+    color: #666;
+    cursor: pointer;
+    user-select: none;
+    display: inline-block;
+    padding: 2px 0;
+}
+
+.new-upload-link:hover {
+    color: #111;
+    text-decoration: underline;
+}
