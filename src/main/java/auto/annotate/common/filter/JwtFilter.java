@@ -45,7 +45,7 @@ public class JwtFilter implements Filter {
                 url.startsWith("/swagger-ui") ||
                 url.startsWith("/v3/api-docs") ||
                 url.startsWith("/api/v1/users/auth/sign-in") ||
-                url.startsWith("/api/v1/users/auth/sign-up") ||
+                url.startsWith("/api/v1/users/sign-up") ||
                 url.startsWith("/api/v1/users/auth/refresh-token") // refreshToken API
         ) {
             chain.doFilter(request, response);
