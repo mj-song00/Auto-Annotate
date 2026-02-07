@@ -10,11 +10,11 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 
 import java.util.*;
-import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 import java.util.stream.Collectors;
 
-import static auto.annotate.common.utils.HospitalKeyUtils.*;
+import static auto.annotate.common.utils.HospitalKeyUtils.isPharmacy;
+import static auto.annotate.common.utils.HospitalKeyUtils.parseTotalDays;
 
 
 @Service
@@ -160,10 +160,5 @@ public class HighlightServiceImpl implements HighlightService {
 
         // 영문은 소문자로 통일
         return s.toLowerCase();
-    }
-
-    private int safeParseInt(String v) {
-        try { return Integer.parseInt(v); }
-        catch (Exception e) { return 0; }
     }
 }
