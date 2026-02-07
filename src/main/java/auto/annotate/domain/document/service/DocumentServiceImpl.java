@@ -215,7 +215,7 @@ public class DocumentServiceImpl implements DocumentService {
     public Resource downloadExcelByCondition(UUID documentId, int condition) {
 
         return switch (condition) {
-            case 0 -> downloadVisitOver7DaysExcel(documentId);
+            case 0 -> downloadSameCodeVisitOver7DaysExcel(documentId);
             case 1 -> downloadDrugOver30DaysExcel(documentId);
             case 2 -> downloadHospitalizationExcel(documentId);
             case 3 -> downloadSurgeryExcel(documentId);
@@ -223,12 +223,12 @@ public class DocumentServiceImpl implements DocumentService {
         };
     }
 
-    private Resource downloadVisitOver7DaysExcel(UUID documentId) {
+    private Resource downloadSameCodeVisitOver7DaysExcel(UUID documentId) {
         return runExcelDownload(
                 documentId,
                 0,
                 HighlightTarget.VISIT_SUMMARY,
-                "visit7days",
+                "SameCode7days",
                 this::parseVisitSummaryPdf,
                 rows -> {
                     Set<String> hitHospitalKeys = findHospitalKeysWith7Days(rows);
@@ -400,7 +400,15 @@ public class DocumentServiceImpl implements DocumentService {
                 row.createCell(1).setCellValue(safe(r.getTreatmentStartDate()));
                 row.createCell(2).setCellValue(safe(r.getInstitutionName()));
                 row.createCell(3).setCellValue(safe(r.getTreatmentItem()));
-                row.createCell(4).setCellValue(safe(r.getCodeName()));
+
+                String rawCodeName = safe(r.getCodeName());
+                String normalizedCodeName = rawCodeName.replaceAll("\\s+", " ").trim();
+                int cut = normalizedCodeName.lastIndexOf(")");
+                String prettyCodeName = (cut >= 0 && cut + 1 < normalizedCodeName.length())
+                        ? normalizedCodeName.substring(cut + 1).trim()
+                        : normalizedCodeName;
+
+                row.createCell(4).setCellValue(prettyCodeName);
                 row.createCell(5).setCellValue(safe(r.getDosePerOnce()));
                 row.createCell(6).setCellValue(safe(r.getTimesPerDay()));
                 row.createCell(7).setCellValue(safe(r.getTotalDays()));
@@ -414,7 +422,6 @@ public class DocumentServiceImpl implements DocumentService {
             try (OutputStream os = Files.newOutputStream(out)) {
                 wb.write(os);
             }
-
         } catch (IOException e) {
             throw new BaseException(ExceptionEnum.FILE_WRITE_ERROR);
         }
@@ -1041,7 +1048,7 @@ public class DocumentServiceImpl implements DocumentService {
 
     private void writeVisit7DaysExcel(List<PdfRowRecord> rows, Path out) {
         try (var wb = new org.apache.poi.xssf.usermodel.XSSFWorkbook()) {
-            var sheet = wb.createSheet("7일이상내원");
+            var sheet = wb.createSheet("SameCode7days");
 
 
             // ✅ VISIT_SUMMARY 표 컬럼
