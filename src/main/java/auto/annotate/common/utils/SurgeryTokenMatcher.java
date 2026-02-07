@@ -9,7 +9,7 @@ public class SurgeryTokenMatcher {
 
     // "…수술"로 끝나는 토큰을 잡아내기 위한 패턴
     private static final Pattern REAL_SURGERY_TOKEN =
-            Pattern.compile("([가-힣A-Za-z0-9\\[\\]\\/\\-]{2,}수술)(?=\\d|$)");
+            Pattern.compile("([가-힣A-Za-z0-9\\[\\]\\/\\-]{2,}(?:수술|유화술|삽입술|조대술))(?=\\d|$|-)");
 
     public boolean hasRealSurgeryToken(String rowText) {
         if (rowText == null) return false;
