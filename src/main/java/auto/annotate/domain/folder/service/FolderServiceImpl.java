@@ -14,6 +14,8 @@ import auto.annotate.domain.user.entity.User;
 import auto.annotate.domain.user.reposotiry.UserRepository;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.Pageable;
 import org.springframework.stereotype.Service;
 
 import java.util.ArrayList;
@@ -31,21 +33,12 @@ public class FolderServiceImpl implements FolderService {
     private final DocumentRepository documentRepository;
 
     @Override
-    public List<FolderResponse> getFolders(AuthUser authUser) {
+    public Page<FolderResponse> getFolders(AuthUser authUser, Pageable pageable) {
         User user = getUser(authUser.getId());
 
-        List<Folder> folders = folderRepository.findByUserAndDeletedAtIsNullOrderByCreatedAtDesc(user);
-        List<FolderResponse> responses = new ArrayList<>();
+        Page<Folder> folders = folderRepository.findByUserAndDeletedAtIsNullOrderByCreatedAtDesc(user, pageable);
 
-        for (Folder folder : folders) {
-            responses.add(
-                    FolderResponse.of(
-                            folder.getId(),
-                            folder.getName()
-                    )
-            );
-        }
-        return responses;
+        return folders.map(folder -> FolderResponse.of(folder.getId(), folder.getName()));
     }
 
     @Override

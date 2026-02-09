@@ -2,6 +2,8 @@ package auto.annotate.domain.document.repository;
 
 import auto.annotate.domain.document.dto.HighlightTarget;
 import auto.annotate.domain.document.entity.Document;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.repository.JpaRepository;
 
 import java.util.List;

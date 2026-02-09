@@ -5,11 +5,15 @@ import auto.annotate.common.response.ApiResponse;
 import auto.annotate.common.response.ApiResponseEnum;
 import auto.annotate.domain.folder.dto.request.UpdateTitleRequest;
 import auto.annotate.domain.folder.dto.response.FolderDocumentResponse;
+import auto.annotate.domain.folder.dto.response.FolderPageResponse;
 import auto.annotate.domain.folder.dto.response.FolderResponse;
 import auto.annotate.domain.folder.service.FolderService;
 import auto.annotate.domain.user.dto.AuthUser;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.PageRequest;
+import org.springframework.data.domain.Pageable;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
@@ -25,13 +29,26 @@ public class FolderController {
     private final FolderService folderService;
 
     @GetMapping("")
-    public ResponseEntity<ApiResponse<List<FolderResponse>>> getFolders(
-            @Auth AuthUser authUser
+    public ResponseEntity<ApiResponse<FolderPageResponse>> getFolders(
+            @Auth AuthUser authUser,
+            @RequestParam(defaultValue = "1") int page,
+            @RequestParam(defaultValue = "10") int size
     ){
-        List<FolderResponse> result = folderService.getFolders(authUser);
-        ApiResponse<List<FolderResponse>> response =
-                ApiResponse.successWithData(result, ApiResponseEnum.GET_FOLDER_SUCCESS);
-        return ResponseEntity.status(HttpStatus.OK).body(response);
+        Pageable pageable = PageRequest.of(page - 1, size);
+
+        Page<FolderResponse> result = folderService.getFolders(authUser, pageable);
+
+        FolderPageResponse response = new FolderPageResponse(
+                result.getContent(),
+                result.getNumber(),
+                result.getTotalElements(),
+                result.getTotalPages()
+        );
+
+
+        ApiResponse<FolderPageResponse> apiResponse =
+                ApiResponse.successWithData(response, ApiResponseEnum.GET_FOLDER_SUCCESS);
+        return ResponseEntity.status(HttpStatus.OK).body(apiResponse);
     }
 
     /**
