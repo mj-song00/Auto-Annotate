@@ -25,4 +25,9 @@ public class PdfController {
     public String mainPage(){
         return "main";
     }
+
+    @GetMapping("/profile")
+    public String profile(){
+        return "profile";
+    }
 }
