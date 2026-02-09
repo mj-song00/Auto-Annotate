@@ -1,52 +1,13 @@
-let isUnauthorizedHandled = false;
 let currentProfile = null;
 
-function getAccessToken() {
-    return localStorage.getItem("accessToken");
-}
+let currentFolderId = null;
+let documentsByTarget = {};
 
-function handleUnauthorized() {
-    if (isUnauthorizedHandled) return;
-    isUnauthorizedHandled = true;
+let currentFolderPage = 1;
+const folderPageSize = 10;
 
-    alert("인증이 만료되었습니다.");
-    localStorage.removeItem("accessToken");
-    window.location.href = "/login";
-}
-
-async function checkAuth() {
-    const token = getAccessToken();
-    if (!token || token.trim() === "") {
-        alert("로그인이 필요합니다.");
-        window.location.href = "/login";
-        return;
-    }
-}
-
-// async function LoadProfile() {
-//     const token = getAccessToken();
-//     if (!token) {
-//         handleUnauthorized();
-//         return;
-//     }
-//
-//     const response = await fetch("/api/v1/users/me/profile", {
-//         headers: { Authorization: `Bearer ${token}` }
-//     });
-//
-//     if (response.status === 401) {
-//         handleUnauthorized();
-//         return;
-//     }
-//
-//     if (!response.ok) {
-//         console.error("프로필 조회 실패", response.status);
-//         return;
-//     }
-//
-//     const result = await response.json();
-//     currentProfile = result.data || null;
-// }
+let folderTotalPages = 0;
+let folderMenuDocClickBound = false;
 
 function bindLogoutButton() {
     const logoutBtn = document.querySelector("header button");
@@ -92,25 +53,17 @@ async function uploadFiles(files, folderName) {
             return;
         }
 
-        document.querySelector(".upload-center").style.display = "none";
-        document.querySelector(".result-area").style.display = "block";
+        const uploadCenter = document.querySelector(".upload-center");
+        const resultArea = document.querySelector(".result-area");
+        if (uploadCenter) uploadCenter.style.display = "none";
+        if (resultArea) resultArea.style.display = "block";
 
         currentFolderPage = 1;
         await getFolders();
-
     } catch (e) {
         console.error("업로드 오류", e);
     }
 }
-
-let currentFolderId = null;
-let documentsByTarget = {};
-
-let currentFolderPage = 1;
-const folderPageSize = 10;
-
-let folderTotalPages = 0;
-let folderMenuDocClickBound = false;
 
 async function getFolders() {
     const token = getAccessToken();
@@ -130,6 +83,11 @@ async function getFolders() {
             return;
         }
 
+        if (!response.ok) {
+            console.error("폴더 조회 실패", response.status);
+            return;
+        }
+
         const result = await response.json();
 
         const data = result.data || {};
@@ -145,17 +103,13 @@ async function getFolders() {
         const nextBtn = document.getElementById("folderNext");
         const pageInfo = document.getElementById("folderPageInfo");
 
-        if (pageInfo) {
-            pageInfo.textContent = `${currentFolderPage} / ${totalPages}`;
-        }
-        if (prevBtn) {
-            prevBtn.disabled = number <= 0;
-        }
-        if (nextBtn) {
-            nextBtn.disabled = totalPages === 0 || number >= totalPages - 1;
-        }
+        if (pageInfo) pageInfo.textContent = `${currentFolderPage} / ${totalPages}`;
+        if (prevBtn) prevBtn.disabled = number <= 0;
+        if (nextBtn) nextBtn.disabled = totalPages === 0 || number >= totalPages - 1;
 
         const folderList = document.getElementById("folderList");
+        if (!folderList) return;
+
         folderList.innerHTML = "";
 
         folders.forEach(folder => {
@@ -222,21 +176,20 @@ async function getFolders() {
         if (folders.length === 0) {
             currentFolderId = null;
 
-            document.querySelectorAll("#folderList li").forEach(li => {
-                li.classList.remove("active");
-            });
+            document.querySelectorAll("#folderList li").forEach(li => li.classList.remove("active"));
 
-            document.querySelector(".result-area").style.display = "none";
-            document.querySelector(".upload-center").style.display = "flex";
+            const resultArea = document.querySelector(".result-area");
+            const uploadCenter = document.querySelector(".upload-center");
+            if (resultArea) resultArea.style.display = "none";
+            if (uploadCenter) uploadCenter.style.display = "flex";
             return;
         }
 
         if (folders.length > 0 && !currentFolderId && currentFolderPage === 1) {
             loadFolder(folders[0].id);
         }
-
     } catch (e) {
-        console.log(e);
+        console.error(e);
     }
 }
 
@@ -291,6 +244,10 @@ function editFolder(folderId, currentName, li) {
 
 async function updateFolderName(folderId, name) {
     const token = getAccessToken();
+    if (!token) {
+        handleUnauthorized();
+        return;
+    }
 
     const response = await fetch(`/api/v1/folder/${folderId}`, {
         method: "PUT",
@@ -316,6 +273,11 @@ async function updateFolderName(folderId, name) {
 
 async function deleteFolder(folderId) {
     const token = getAccessToken();
+    if (!token) {
+        handleUnauthorized();
+        return;
+    }
+
     if (!confirm("폴더를 삭제하시겠습니까?")) return;
 
     const response = await fetch(`/api/v1/folder/${folderId}`, {
@@ -336,8 +298,11 @@ async function deleteFolder(folderId) {
     if (currentFolderId === folderId) {
         currentFolderId = null;
         documentsByTarget = {};
-        document.querySelector(".result-area").style.display = "none";
-        document.querySelector(".upload-center").style.display = "flex";
+
+        const resultArea = document.querySelector(".result-area");
+        const uploadCenter = document.querySelector(".upload-center");
+        if (resultArea) resultArea.style.display = "none";
+        if (uploadCenter) uploadCenter.style.display = "flex";
     }
 
     await getFolders();
@@ -345,23 +310,25 @@ async function deleteFolder(folderId) {
 
 function loadFolder(folderId) {
     const token = getAccessToken();
-    currentFolderId = folderId;
+    if (!token) {
+        handleUnauthorized();
+        return;
+    }
 
+    currentFolderId = folderId;
     documentsByTarget = {};
 
-    document.querySelectorAll("#folderList li").forEach(li => {
-        li.classList.remove("active");
-    });
+    document.querySelectorAll("#folderList li").forEach(li => li.classList.remove("active"));
 
     const clickedLi = [...document.querySelectorAll("#folderList li")]
         .find(li => li.dataset.folderId === folderId);
 
-    if (clickedLi) {
-        clickedLi.classList.add("active");
-    }
+    if (clickedLi) clickedLi.classList.add("active");
 
-    document.querySelector(".upload-center").style.display = "none";
-    document.querySelector(".result-area").style.display = "block";
+    const uploadCenter = document.querySelector(".upload-center");
+    const resultArea = document.querySelector(".result-area");
+    if (uploadCenter) uploadCenter.style.display = "none";
+    if (resultArea) resultArea.style.display = "block";
 
     document.querySelectorAll(".download-buttons button").forEach(btn => {
         btn.disabled = true;
@@ -377,7 +344,7 @@ function loadFolder(folderId) {
         .then(res => {
             if (res.status === 401) {
                 handleUnauthorized();
-                return;
+                return null;
             }
             if (!res.ok) throw new Error("폴더 문서 목록 조회 실패");
             return res.json();
@@ -402,7 +369,6 @@ function loadFolder(folderId) {
                     3: "PRESCRIPTION"
                 };
                 const target = conditionToTarget[condition];
-
                 btn.disabled = !documentsByTarget[target];
             });
         })
@@ -435,21 +401,23 @@ function download(condition) {
     }
 
     const token = getAccessToken();
+    if (!token) {
+        handleUnauthorized();
+        return;
+    }
 
     fetch(`/api/v1/document/${documentId}/excel?condition=${conditionNum}`, {
-        headers: {
-            Authorization: `Bearer ${token}`
-        }
+        headers: { Authorization: `Bearer ${token}` }
     })
         .then(response => {
             if (response.status === 401) {
                 handleUnauthorized();
-                return;
+                return null;
             }
 
             if (!response.ok) {
                 alert("다운로드 실패");
-                return;
+                return null;
             }
 
             return response.blob();
@@ -468,11 +436,12 @@ function download(condition) {
         });
 }
 
-window.addEventListener("load", () => {
-    checkAuth();
-    // LoadProfile();
+window.addEventListener("load", async () => {
+    const ok = await checkAuth();
+    if (!ok) return;
+
     bindLogoutButton();
-    getFolders();
+    await getFolders();
 
     const uploadBtn = document.getElementById("uploadBtn");
     const fileInput = document.getElementById("fileInput");
@@ -498,44 +467,56 @@ window.addEventListener("load", () => {
         });
     }
 
-    newUploadBtn.addEventListener("click", () => {
-        currentFolderId = null;
-        documentsByTarget = {};
+    if (newUploadBtn) {
+        newUploadBtn.addEventListener("click", () => {
+            currentFolderId = null;
+            documentsByTarget = {};
 
-        document.querySelectorAll("#folderList li").forEach(li => {
-            li.classList.remove("active");
+            document.querySelectorAll("#folderList li").forEach(li => li.classList.remove("active"));
+
+            const resultArea = document.querySelector(".result-area");
+            const uploadCenter = document.querySelector(".upload-center");
+            if (resultArea) resultArea.style.display = "none";
+            if (uploadCenter) uploadCenter.style.display = "flex";
+
+            if (folderInput) folderInput.value = "";
+            if (fileInput) fileInput.value = "";
+        });
+    }
+
+    if (uploadBtn && fileInput && folderInput) {
+        uploadBtn.addEventListener("click", () => {
+            const folderName = folderInput.value.trim();
+            if (!folderName) {
+                alert("폴더 이름을 입력해주세요.");
+                return;
+            }
+            fileInput.click();
         });
 
-        document.querySelector(".result-area").style.display = "none";
-        document.querySelector(".upload-center").style.display = "flex";
+        fileInput.addEventListener("change", () => {
+            const folderName = folderInput.value.trim();
+            if (!folderName) {
+                alert("폴더 이름을 입력해주세요.");
+                fileInput.value = "";
+                return;
+            }
+            if (!fileInput.files.length) return;
 
-        folderInput.value = "";
-        fileInput.value = "";
-    });
-
-    uploadBtn.addEventListener("click", () => {
-        const folderName = folderInput.value.trim();
-        if (!folderName) {
-            alert("폴더 이름을 입력해주세요.");
-            return;
-        }
-        fileInput.click();
-    });
-
-    fileInput.addEventListener("change", () => {
-        const folderName = folderInput.value.trim();
-        if (!folderName) {
-            alert("폴더 이름을 입력해주세요.");
+            uploadFiles(fileInput.files, folderName);
             fileInput.value = "";
-            return;
-        }
-        if (!fileInput.files.length) return;
-        uploadFiles(fileInput.files, folderName);
-        fileInput.value = "";
-    });
+        });
+    }
 
-    document.getElementById("dl0").addEventListener("click", () => download(0));
-    document.getElementById("dl1").addEventListener("click", () => download(1));
-    document.getElementById("dl2").addEventListener("click", () => download(2));
-    document.getElementById("dl3").addEventListener("click", () => download(3));
+    await LoadProfile();
+
+    const dl0 = document.getElementById("dl0");
+    const dl1 = document.getElementById("dl1");
+    const dl2 = document.getElementById("dl2");
+    const dl3 = document.getElementById("dl3");
+
+    if (dl0) dl0.addEventListener("click", () => download(0));
+    if (dl1) dl1.addEventListener("click", () => download(1));
+    if (dl2) dl2.addEventListener("click", () => download(2));
+    if (dl3) dl3.addEventListener("click", () => download(3));
 });
