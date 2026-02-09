@@ -1,0 +1,73 @@
+<!DOCTYPE html>
+<html xmlns:th="http://www.thymeleaf.org">
+<head>
+    <link rel="stylesheet" href="/css/profile.css">
+</head>
+
+<body>
+<div id="app">
+    <div th:replace="header :: appHeader"></div>
+
+    <main class="profile-container">
+        <div class="profile-actions">
+            <button type="button" data-modal="nickname">닉네임 변경</button>
+            <button type="button" data-modal="password">비밀번호 변경</button>
+            <button type="button" data-modal="withdraw" class="danger">회원 탈퇴</button>
+        </div>
+    </main>
+
+    <!-- 공통 모달 베이스 -->
+    <div id="modalOverlay" class="modal-overlay" hidden>
+        <div class="modal" role="dialog" aria-modal="true" aria-labelledby="modalTitle">
+            <div class="modal-header">
+                <h2 id="modalTitle" class="modal-title"></h2>
+                <button type="button" id="modalCloseBtn" class="modal-close" aria-label="닫기">×</button>
+            </div>
+
+            <div id="modalBody" class="modal-body"></div>
+
+            <div class="modal-footer">
+                <button type="button" id="modalCancelBtn" class="modal-btn">취소</button>
+                <button type="button" id="modalConfirmBtn" class="modal-btn primary">확인</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- 모달 내용 템플릿들 -->
+    <template id="tpl-nickname">
+        <label class="form-row">
+            <span class="label">새 닉네임</span>
+            <input type="text" id="newNicknameInput" class="input" placeholder="닉네임을 입력하세요">
+        </label>
+    </template>
+
+    <template id="tpl-password">
+        <label class="form-row">
+            <span class="label">현재 비밀번호</span>
+            <input type="password" id="currentPasswordInput" class="input">
+        </label>
+        <label class="form-row">
+            <span class="label">새 비밀번호</span>
+            <input type="password" id="newPasswordInput" class="input">
+        </label>
+        <label class="form-row">
+            <span class="label">새 비밀번호 확인</span>
+            <input type="password" id="newPasswordConfirmInput" class="input">
+        </label>
+    </template>
+
+    <template id="tpl-withdraw">
+        <div class="withdraw-box">
+            <p class="withdraw-title">정말 탈퇴하시겠어요?</p>
+            <p class="withdraw-desc">탈퇴하면 계정 접근이 제한되며 일부 데이터는 복구가 어려울 수 있습니다.</p>
+
+            <label class="withdraw-check">
+                <input type="checkbox" id="withdrawAgreeChk">
+                <span>위 내용을 확인했고, 탈퇴에 동의합니다.</span>
+            </label>
+        </div>
+    </template>
+</div>
+<script src="/js/profile.js" defer></script>
+</body>
+</html>
