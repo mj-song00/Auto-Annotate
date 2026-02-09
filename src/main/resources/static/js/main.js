@@ -1,8 +1,14 @@
+let isUnauthorizedHandled = false;
+let currentProfile = null;
+
 function getAccessToken() {
     return localStorage.getItem("accessToken");
 }
 
 function handleUnauthorized() {
+    if (isUnauthorizedHandled) return;
+    isUnauthorizedHandled = true;
+
     alert("인증이 만료되었습니다.");
     localStorage.removeItem("accessToken");
     window.location.href = "/login";
@@ -17,27 +23,30 @@ async function checkAuth() {
     }
 }
 
-async function LoadProfile() {
-    const token = getAccessToken();
-    if (!token) {
-        handleUnauthorized();
-        return;
-    }
-
-    const response = await fetch("/api/v1/users/me/profile", {
-        headers: { Authorization: `Bearer ${token}` }
-    });
-
-    if (response.status === 401) {
-        handleUnauthorized();
-        return;
-    }
-
-    if (!response.ok) {
-        console.error("프로필 조회 실패", response.status);
-        return;
-    }
-}
+// async function LoadProfile() {
+//     const token = getAccessToken();
+//     if (!token) {
+//         handleUnauthorized();
+//         return;
+//     }
+//
+//     const response = await fetch("/api/v1/users/me/profile", {
+//         headers: { Authorization: `Bearer ${token}` }
+//     });
+//
+//     if (response.status === 401) {
+//         handleUnauthorized();
+//         return;
+//     }
+//
+//     if (!response.ok) {
+//         console.error("프로필 조회 실패", response.status);
+//         return;
+//     }
+//
+//     const result = await response.json();
+//     currentProfile = result.data || null;
+// }
 
 function bindLogoutButton() {
     const logoutBtn = document.querySelector("header button");
@@ -83,17 +92,25 @@ async function uploadFiles(files, folderName) {
             return;
         }
 
-        console.log("업로드 성공");
-
         document.querySelector(".upload-center").style.display = "none";
         document.querySelector(".result-area").style.display = "block";
 
+        currentFolderPage = 1;
         await getFolders();
 
     } catch (e) {
         console.error("업로드 오류", e);
     }
 }
+
+let currentFolderId = null;
+let documentsByTarget = {};
+
+let currentFolderPage = 1;
+const folderPageSize = 10;
+
+let folderTotalPages = 0;
+let folderMenuDocClickBound = false;
 
 async function getFolders() {
     const token = getAccessToken();
@@ -103,7 +120,7 @@ async function getFolders() {
     }
 
     try {
-        const response = await fetch("/api/v1/folder", {
+        const response = await fetch(`/api/v1/folder?page=${currentFolderPage}&size=${folderPageSize}`, {
             method: "GET",
             headers: { Authorization: `Bearer ${token}` }
         });
@@ -114,7 +131,29 @@ async function getFolders() {
         }
 
         const result = await response.json();
-        const folders = result.data || [];
+
+        const data = result.data || {};
+        const folders = data.content || [];
+
+        const number = typeof data.number === "number" ? data.number : 0;
+        const totalPages = typeof data.totalPages === "number" ? data.totalPages : 0;
+
+        folderTotalPages = totalPages;
+        currentFolderPage = number + 1;
+
+        const prevBtn = document.getElementById("folderPrev");
+        const nextBtn = document.getElementById("folderNext");
+        const pageInfo = document.getElementById("folderPageInfo");
+
+        if (pageInfo) {
+            pageInfo.textContent = `${currentFolderPage} / ${totalPages}`;
+        }
+        if (prevBtn) {
+            prevBtn.disabled = number <= 0;
+        }
+        if (nextBtn) {
+            nextBtn.disabled = totalPages === 0 || number >= totalPages - 1;
+        }
 
         const folderList = document.getElementById("folderList");
         folderList.innerHTML = "";
@@ -171,11 +210,14 @@ async function getFolders() {
             folderList.appendChild(li);
         });
 
-        document.addEventListener("click", () => {
-            document.querySelectorAll(".folder-menu").forEach(m => {
-                m.style.display = "none";
+        if (!folderMenuDocClickBound) {
+            document.addEventListener("click", () => {
+                document.querySelectorAll(".folder-menu").forEach(m => {
+                    m.style.display = "none";
+                });
             });
-        });
+            folderMenuDocClickBound = true;
+        }
 
         if (folders.length === 0) {
             currentFolderId = null;
@@ -189,7 +231,7 @@ async function getFolders() {
             return;
         }
 
-        if (folders.length > 0 && !currentFolderId) {
+        if (folders.length > 0 && !currentFolderId && currentFolderPage === 1) {
             loadFolder(folders[0].id);
         }
 
@@ -300,9 +342,6 @@ async function deleteFolder(folderId) {
 
     await getFolders();
 }
-
-let currentFolderId = null;
-let documentsByTarget = {};
 
 function loadFolder(folderId) {
     const token = getAccessToken();
@@ -431,7 +470,7 @@ function download(condition) {
 
 window.addEventListener("load", () => {
     checkAuth();
-    LoadProfile();
+    // LoadProfile();
     bindLogoutButton();
     getFolders();
 
@@ -439,6 +478,25 @@ window.addEventListener("load", () => {
     const fileInput = document.getElementById("fileInput");
     const folderInput = document.getElementById("folderName");
     const newUploadBtn = document.getElementById("newUploadBtn");
+
+    const prevBtn = document.getElementById("folderPrev");
+    const nextBtn = document.getElementById("folderNext");
+
+    if (prevBtn) {
+        prevBtn.addEventListener("click", async () => {
+            if (currentFolderPage <= 1) return;
+            currentFolderPage -= 1;
+            await getFolders();
+        });
+    }
+
+    if (nextBtn) {
+        nextBtn.addEventListener("click", async () => {
+            if (folderTotalPages > 0 && currentFolderPage >= folderTotalPages) return;
+            currentFolderPage += 1;
+            await getFolders();
+        });
+    }
 
     newUploadBtn.addEventListener("click", () => {
         currentFolderId = null;
