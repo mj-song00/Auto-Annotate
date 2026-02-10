@@ -22,3 +22,20 @@ async function checkAuth() {
     }
     return true;
 }
+
+async function logout(){
+    const logoutBtn = document.getElementById("logoutBtn");
+    if (!logoutBtn) return;
+
+    logoutBtn.addEventListener("click", () => {
+        localStorage.removeItem("accessToken");
+        window.location.href = "/login";
+    });
+}
+
+window.addEventListener("load", async () => {
+    const ok = await checkAuth();
+    if (!ok) return;
+
+    logout();
+});
