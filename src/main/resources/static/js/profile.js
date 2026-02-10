@@ -33,12 +33,30 @@ async function changeNickname() {
     const token = getAccessToken();
     if (!token) {
         handleUnauthorized();
-        return;
+        return false;
     }
 
-    const nickname = document.getElementById("newNicknameInput").value;
-    const errorMessage = document.getElementById("errorMessage");
-    errorMessage.classList.add("hidden");
+    const modalBody = document.getElementById("modalBody");
+    const input = modalBody ? modalBody.querySelector("#newNicknameInput") : null;
+    const errorMessage = modalBody ? modalBody.querySelector("#errorMessage") : null;
+
+    const nickname = input ? input.value.trim() : "";
+
+    if (errorMessage) {
+        errorMessage.textContent = "";
+        errorMessage.classList.add("hidden");
+    }
+
+    if (!nickname) {
+        if (errorMessage) {
+            errorMessage.textContent = "닉네임을 입력하세요.";
+            errorMessage.classList.remove("hidden");
+        } else {
+            alert("닉네임을 입력하세요.");
+        }
+        return false;
+    }
+
     try {
         const response = await fetch(`/api/v1/users/me/nickname`, {
             method: "PATCH",
@@ -46,19 +64,40 @@ async function changeNickname() {
                 Authorization: `Bearer ${token}`,
                 "Content-Type": "application/json"
             },
-            body: JSON.stringify({
-                newNickName: nickname
-            })
-        })
-        if (!response.ok) {
-            const msg = await response.text().catch(() => "");
-            throw new Error(msg || "닉네임 확인 바랍니다.");
+            body: JSON.stringify({ newNickName: nickname })
+        });
+
+        if (response.status === 401) {
+            handleUnauthorized();
+            return false;
         }
 
-        if (errorMessage) errorMessage.textContent = "";
-        alert("닉네임이 변경되었습니다.")
+        if (!response.ok) {
+            const msg = await response.text().catch(() => "");
+            if (errorMessage) {
+                errorMessage.textContent = msg || "닉네임을 확인해주세요.";
+                errorMessage.classList.remove("hidden");
+            } else {
+                alert(msg || "닉네임을 확인해주세요.");
+            }
+            return false;
+        }
+
+        alert("닉네임이 변경되었습니다.");
+
+        const nicknameEl = document.getElementById("nicknameText");
+        if (nicknameEl) nicknameEl.textContent = `${nickname}님`;
+
+        return true;
     } catch (e) {
         console.error(e);
+        if (errorMessage) {
+            errorMessage.textContent = "요청 중 오류가 발생했습니다.";
+            errorMessage.classList.remove("hidden");
+        } else {
+            alert("요청 중 오류가 발생했습니다.");
+        }
+        return false;
     }
 }
 
@@ -139,83 +178,19 @@ window.addEventListener("load", () => {
         const title = modalTitle.textContent || "";
 
         if (title.includes("닉네임")) {
-            const token = getAccessToken();
-            if (!token) {
-                handleUnauthorized();
-                return;
-            }
+            const ok = await changeNickname();
+            if (!ok) return;
 
-            const input = modalBody.querySelector("#newNicknameInput");
-            const errorMessage = modalBody.querySelector("#errorMessage");
+            overlay.hidden = true;
+            document.body.style.overflow = "";
+            return;
+        }
 
-            const value = input ? input.value.trim() : "";
-            if (errorMessage) {
-                errorMessage.textContent = "";
-                errorMessage.classList.add("hidden");
-            }
-
-            if (!value) {
-                if (errorMessage) {
-                    errorMessage.textContent = "닉네임을 입력하세요.";
-                    errorMessage.classList.remove("hidden");
-                } else {
-                    alert("닉네임을 입력하세요.");
-                }
-                return;
-            }
-
-            try {
-                const response = await fetch("/api/v1/users/me/nickname", {
-                    method: "PATCH",
-                    headers: {
-                        Authorization: `Bearer ${token}`,
-                        "Content-Type": "application/json"
-                    },
-                    body: JSON.stringify({ newNickName: value })
-                });
-
-                if (response.status === 401) {
-                    handleUnauthorized();
-                    return;
-                }
-
-                if (!response.ok) {
-                    const msg = await response.text().catch(() => "");
-                    if (errorMessage) {
-                        errorMessage.textContent = msg || "닉네임을 확인해주세요.";
-                        errorMessage.classList.remove("hidden");
-                    } else {
-                        alert(msg || "닉네임을 확인해주세요.");
-                    }
-                    return;
-                }
-
-                alert("닉네임이 변경되었습니다.");
-
-                // 화면 상단 닉네임 즉시 반영(프로필 다시 로드하거나, 바로 치환)
-                const nicknameEl = document.getElementById("nicknameText");
-                if (nicknameEl) nicknameEl.textContent = `${value}님`;
-
-                // 모달 닫기
-                overlay.hidden = true;
-                document.body.style.overflow = "";
-                return;
-
-            } catch (e) {
-                console.error(e);
-                if (errorMessage) {
-                    errorMessage.textContent = "요청 중 오류가 발생했습니다.";
-                    errorMessage.classList.remove("hidden");
-                } else {
-                    alert("요청 중 오류가 발생했습니다.");
-                }
-                return;
-            }
-
-        } else if (title.includes("비밀번호")) {
+        if (title.includes("비밀번호")) {
             const cur = modalBody.querySelector("#currentPasswordInput")?.value || "";
             const nw = modalBody.querySelector("#newPasswordInput")?.value || "";
             const nw2 = modalBody.querySelector("#newPasswordConfirmInput")?.value || "";
+
             if (!cur || !nw || !nw2) {
                 alert("모든 항목을 입력하세요.");
                 return;
@@ -226,11 +201,21 @@ window.addEventListener("load", () => {
             }
             alert("비밀번호 변경 요청 연결만 하면 됩니다.");
 
-        } else if (title.includes("회원 탈퇴")) {
+            overlay.hidden = true;
+            document.body.style.overflow = "";
+            return;
+        }
+
+        if (title.includes("회원 탈퇴")) {
             const chk = modalBody.querySelector("#withdrawAgreeChk");
             if (!chk || !chk.checked) return;
             if (!confirm("정말 탈퇴할까요?")) return;
+
             alert("회원 탈퇴 요청 연결만 하면 됩니다.");
+
+            overlay.hidden = true;
+            document.body.style.overflow = "";
+            return;
         }
 
         overlay.hidden = true;
