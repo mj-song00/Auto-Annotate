@@ -17,7 +17,9 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
 
+import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.UUID;
@@ -49,10 +51,16 @@ public class FolderServiceImpl implements FolderService {
     }
 
     @Override
+    @Transactional
     public void deleteTitle(AuthUser authUser, UUID id) {
         Folder folder = getFolder(authUser, id);
+
+        LocalDateTime now = LocalDateTime.now();
+
         folder.delete();
         folderRepository.save(folder);
+
+        documentRepository.softDeleteByFolderId(id, now);
     }
 
     @Override
@@ -71,6 +79,21 @@ public class FolderServiceImpl implements FolderService {
         return documents.stream()
                 .map(FolderDocumentResponse::of)
                 .collect(Collectors.toList());
+    }
+
+    @Transactional
+    public void deleteExpiredFolders() {
+        long t0 = System.nanoTime();
+        LocalDateTime cutoff = LocalDateTime.now().minusDays(3);
+
+        List<Folder> targets =
+                folderRepository.findAllByCreatedAtBeforeAndDeletedAtIsNull(cutoff);
+
+        for (Folder folder : targets) {
+            folder.delete(); // soft delete
+        }
+        long ms = (System.nanoTime() - t0) / 1_000_000;
+        log.info("FOLDER_CLEANUP deleted={} elapsedMs={}", targets.size(), ms);
     }
 
     private User getUser(UUID id) {
