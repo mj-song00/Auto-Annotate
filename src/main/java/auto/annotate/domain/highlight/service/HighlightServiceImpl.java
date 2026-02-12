@@ -80,8 +80,8 @@ public class HighlightServiceImpl implements HighlightService {
      * - immutable 방식: record.withHighlightTypes(types) 사용
      */
 
-    private static final Pattern INOUT_ANYWHERE = Pattern.compile("(\\d+)\\((\\d+)\\)");
-
+//    private static final Pattern INOUT_ANYWHERE = Pattern.compile("(\\d+)\\((\\d+)\\)");
+//
 
     private PdfRowRecord applyRuleByCondition(
             PdfRowRecord r,

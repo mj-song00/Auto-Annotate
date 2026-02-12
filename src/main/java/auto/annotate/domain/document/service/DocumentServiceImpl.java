@@ -35,6 +35,11 @@ import org.springframework.core.io.Resource;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.multipart.MultipartFile;
+import software.amazon.awssdk.core.sync.RequestBody;
+import software.amazon.awssdk.core.sync.ResponseTransformer;
+import software.amazon.awssdk.services.s3.S3Client;
+import software.amazon.awssdk.services.s3.model.GetObjectRequest;
+import software.amazon.awssdk.services.s3.model.PutObjectRequest;
 
 import java.io.IOException;
 import java.io.OutputStream;
@@ -42,6 +47,8 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.util.*;
+import java.util.function.BiConsumer;
+import java.util.function.Function;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 import java.util.stream.Collectors;
@@ -59,8 +66,14 @@ public class DocumentServiceImpl implements DocumentService {
     private final UserRepository userRepository;
     private final FolderRepository folderRepository;
 
+    private final S3Client s3Client;
+
     @Value("${pdf.file.upload-dir}")
     private String uploadDir;
+
+    @Value("${aws.s3.bucket}")
+    private String bucket;
+
 
     @Transactional
     @Override
@@ -83,22 +96,17 @@ public class DocumentServiceImpl implements DocumentService {
             }
         }
 
-        // 폴더 이름은 사용자가 반드시 지정
-        if (saveFolderRequest == null || saveFolderRequest.getName() == null) {
+        if (saveFolderRequest == null
+                || saveFolderRequest.getName() == null
+                || saveFolderRequest.getName().trim().isEmpty()) {
             throw new BaseException(ExceptionEnum.INVALID_FOLDER_NAME);
         }
 
-        // 폴더는 요청당 한 번만 생성
-        Folder folder = new Folder(
-                saveFolderRequest.getName(),
-                user
-        );
+        Folder folder = new Folder(saveFolderRequest.getName().trim(), user);
         folderRepository.save(folder);
 
         for (MultipartFile multipartFile : multipartFiles) {
-            if (multipartFile == null || multipartFile.isEmpty()) {
-                continue;
-            }
+            if (multipartFile == null || multipartFile.isEmpty()) continue;
 
             UUID id = UUID.randomUUID();
             String originalFilename = multipartFile.getOriginalFilename();
@@ -107,37 +115,68 @@ public class DocumentServiceImpl implements DocumentService {
             Path targetLocation = uploadPath.resolve(storedFilename);
 
             try {
-                Files.copy(multipartFile.getInputStream(), targetLocation);
+                // 1) 로컬 임시 저장
+                Files.copy(
+                        multipartFile.getInputStream(),
+                        targetLocation,
+                        java.nio.file.StandardCopyOption.REPLACE_EXISTING
+                );
+
+                // 2) 첫 페이지로 타겟 판별 (기존 로직 유지)
+                HighlightTarget target = detectHighlightTargetFromFile(targetLocation);
+
+                boolean alreadyExists = savedDocuments.stream()
+                        .anyMatch(d -> d.getTarget() == target);
+
+                if (alreadyExists) {
+                    continue;
+                }
+
+                // 3) S3 key 생성 (prefix 없음)
+                String key = bundleKey + "/" + storedFilename;
+
+                // 4) S3 업로드
+                try {
+                    PutObjectRequest putReq = PutObjectRequest.builder()
+                            .bucket(bucket)
+                            .key(key)
+                            .contentType("application/pdf")
+                            .build();
+
+                    s3Client.putObject(putReq, RequestBody.fromFile(targetLocation));
+                } catch (Exception e) {
+                    throw new BaseException(ExceptionEnum.FILE_SAVE_FAILED);
+                }
+
+                // 5) DB 저장 (storedFilename 대신 S3 key 저장)
+                Document document = new Document(
+                        originalFilename,
+                        key,
+                        bundleKey,
+                        target,
+                        user,
+                        folder
+                );
+
+                savedDocuments.add(documentRepository.save(document));
+
             } catch (IOException e) {
                 throw new BaseException(ExceptionEnum.FILE_SAVE_FAILED);
+            } finally {
+                try { Files.deleteIfExists(targetLocation); } catch (IOException ignore) {}
             }
-
-            HighlightTarget target = detectHighlightTargetFromFile(targetLocation);
-
-            boolean alreadyExists = savedDocuments.stream()
-                    .anyMatch(d -> d.getTarget() == target);
-
-            if (alreadyExists) {
-                continue;
-            }
-
-            Document document = new Document(
-                    originalFilename,
-                    storedFilename,
-                    bundleKey,
-                    target,
-                    user,
-                    folder
-            );
-
-            savedDocuments.add(documentRepository.save(document));
         }
         return savedDocuments;
     }
 
     /**
      * GET /document/{id}/highlighted
-     * 사용자가 요청할 때 하이라이트 PDF를 생성(캐시)하고 Resource로 반환
+     * S3에 저장된 원본 PDF를 임시 파일로 다운로드한 뒤,
+     * 조건에 맞게 하이라이트를 적용하여 PDF를 생성합니다.
+     *
+     * - 원본은 S3에 저장
+     * - 서버 디스크는 임시 작업 용도로만 사용
+     * -  서버 디스크는 임시 작업 용도로만 사용
      */
     @Override
     public Resource loadHighlightedFileAsResource(UUID documentId, int condition) {
@@ -153,26 +192,47 @@ public class DocumentServiceImpl implements DocumentService {
         Document targetDoc = documentRepository.findByBundleKeyAndTarget(bundleKey, targetToRender)
                 .orElseThrow(() -> new BaseException(ExceptionEnum.DOCUMENT_NOT_FOUND));
 
-        Path originalPdfPath = Paths.get(uploadDir, targetDoc.getFileUrl());
+        String s3Key = targetDoc.getFileUrl();   // S3 key
 
-        if (!Files.exists(originalPdfPath)) {
-            throw new BaseException(ExceptionEnum.FILE_NOT_FOUND);
+        Path originalPdfPath = null;
+
+        try {
+            // S3 → 임시 파일 다운로드
+            originalPdfPath = Files.createTempFile("pdf-", ".pdf");
+
+            GetObjectRequest getReq = GetObjectRequest.builder()
+                    .bucket(bucket)
+                    .key(s3Key)
+                    .build();
+
+            s3Client.getObject(getReq, ResponseTransformer.toFile(originalPdfPath));
+
+            // 기존 로직 그대로 사용
+            List<PdfRowRecord> rows = parsePdfToRows(originalPdfPath, targetToRender);
+            List<PdfRowRecord> highlightedRecords =
+                    highlightService.applyHighlights(rows, condition);
+
+            long marked = highlightedRecords.stream()
+                    .filter(r -> r.getHighlightTypes() != null
+                            && !r.getHighlightTypes().isEmpty())
+                    .count();
+
+            log.info("before generate: bundleKey={}, targetToRender={}, condition={}, markedRows={}",
+                    bundleKey, targetToRender, condition, marked);
+
+            Path out = resolveHighlightedOutputPath(bundleKey, targetToRender, condition);
+            generateHighlightedPdf(highlightedRecords, originalPdfPath, out, condition);
+
+            return new FileSystemResource(out);
+
+        } catch (IOException e) {
+            throw new BaseException(ExceptionEnum.FILE_READ_ERROR);
+        } finally {
+            //  임시 파일 정리
+            if (originalPdfPath != null) {
+                try { Files.deleteIfExists(originalPdfPath); } catch (IOException ignore) {}
+            }
         }
-
-        // 5) parse -> applyHighlights -> generate
-        List<PdfRowRecord> rows = parsePdfToRows(originalPdfPath, targetToRender);
-        List<PdfRowRecord> highlightedRecords = highlightService.applyHighlights(rows, condition);
-
-        long marked = highlightedRecords.stream()
-                .filter(r -> r.getHighlightTypes() != null && !r.getHighlightTypes().isEmpty())
-                .count();
-        log.info("before generate: bundleKey={}, targetToRender={}, condition={}, markedRows={}",
-                bundleKey, targetToRender, condition, marked);
-
-        Path out = resolveHighlightedOutputPath(bundleKey, targetToRender, condition);
-        generateHighlightedPdf(highlightedRecords, originalPdfPath, out, condition);
-
-        return new FileSystemResource(out);
     }
 
     private static final Pattern INOUT_ANYWHERE =
@@ -192,7 +252,7 @@ public class DocumentServiceImpl implements DocumentService {
             if (inpatient > 0) {
                 String token = m.group(0)
                         .replace('（', '(')
-                        .replace('）', ')');   // ✅ 괄호 통일
+                        .replace('）', ')');   // 괄호 통일
 
                 tokens.add(token);           // 예: "11(0)"
             }
@@ -853,7 +913,7 @@ public class DocumentServiceImpl implements DocumentService {
             String firstPage = stripper.getText(doc);
 
             if (firstPage.contains("진료정보요약")) return HighlightTarget.VISIT_SUMMARY;
-            if (firstPage.contains("기본진료정보")) return HighlightTarget.DRUG_SUMMARY;      // 현재 enum 재사용
+            if (firstPage.contains("기본진료정보")) return HighlightTarget.DRUG_SUMMARY;
             if (firstPage.contains("세부진료정보")) return HighlightTarget.TREATMENT_DETAIL;
             if (firstPage.contains("처방조제정보")) return HighlightTarget.PRESCRIPTION;
 
@@ -1760,21 +1820,20 @@ public class DocumentServiceImpl implements DocumentService {
             int condition,
             HighlightTarget target,
             String outTag,
-            java.util.function.Function<Path, List<PdfRowRecord>> parseFn,
-            java.util.function.Function<List<PdfRowRecord>, List<PdfRowRecord>> computeHitsFn,
-            java.util.function.BiConsumer<List<PdfRowRecord>, Path> writeFn
+            Function<Path, List<PdfRowRecord>> parseFn,
+            Function<List<PdfRowRecord>, List<PdfRowRecord>> computeHitsFn,
+            BiConsumer<List<PdfRowRecord>, Path> writeFn
     ) {
         final String runId = java.util.UUID.randomUUID().toString().substring(0, 8);
         final long t0 = System.nanoTime();
 
-        long parseMs;
-        long computeMs;
-        long writeMs;
+        long parseMs = 0L;
+        long computeMs = 0L;
+        long writeMs = 0L;
 
-        // pageCount 구하려고 PDF를 별도로 여는 비용 제거(파싱 단계에 포함되므로 totalMs 위주로 보자)
         int pageCount = -1;
-        int rowsTotal;
-        int hitsCount;
+        int rowsTotal = 0;
+        int hitsCount = 0;
 
         Document base = documentRepository.findById(documentId)
                 .orElseThrow(() -> new BaseException(ExceptionEnum.DOCUMENT_NOT_FOUND));
@@ -1783,34 +1842,77 @@ public class DocumentServiceImpl implements DocumentService {
         Document targetDoc = documentRepository.findByBundleKeyAndTarget(bundleKey, target)
                 .orElseThrow(() -> new BaseException(ExceptionEnum.DOCUMENT_NOT_FOUND));
 
-        Path originalPdfPath = Paths.get(uploadDir, targetDoc.getFileUrl());
-        if (!Files.exists(originalPdfPath)) throw new BaseException(ExceptionEnum.FILE_NOT_FOUND);
+        String s3Key = targetDoc.getFileUrl();
 
-        long tp0 = System.nanoTime();
-        List<PdfRowRecord> rows = parseFn.apply(originalPdfPath);
-        parseMs = (System.nanoTime() - tp0) / 1_000_000;
-        rowsTotal = rows == null ? 0 : rows.size();
+        Path originalPdfPath = null;
+        try {
+            originalPdfPath = Files.createTempFile("pdf-", ".pdf");
 
-        long tc0 = System.nanoTime();
-        List<PdfRowRecord> hits = computeHitsFn.apply(rows == null ? java.util.Collections.emptyList() : rows);
-        computeMs = (System.nanoTime() - tc0) / 1_000_000;
-        hitsCount = hits == null ? 0 : hits.size();
+            GetObjectRequest getReq = GetObjectRequest.builder()
+                    .bucket(bucket)
+                    .key(s3Key)
+                    .build();
 
-        Path out = resolveExcelOutputPath(bundleKey, outTag);
+            s3Client.getObject(getReq, ResponseTransformer.toFile(originalPdfPath));
 
-        long tw0 = System.nanoTime();
-        writeFn.accept(hits == null ? java.util.Collections.emptyList() : hits, out);
-        writeMs = (System.nanoTime() - tw0) / 1_000_000;
+            // 1) parse
+            long p0 = System.nanoTime();
+            List<PdfRowRecord> rows = (parseFn != null)
+                    ? parseFn.apply(originalPdfPath)
+                    : parsePdfToRows(originalPdfPath, target); // targetToRender 제거: target 사용
+            parseMs = (System.nanoTime() - p0) / 1_000_000;
 
-        long totalMs = (System.nanoTime() - t0) / 1_000_000;
+            rowsTotal = (rows != null) ? rows.size() : 0;
 
-        log.info(
-                "[EXCEL_METRIC] runId={} cond={} target={} pageCount={} rows={} hits={} parseMs={} computeMs={} writeMs={} totalMs={}",
-                runId, condition, target.name(), pageCount, rowsTotal, hitsCount, parseMs, computeMs, writeMs, totalMs
-        );
+            // pageCount (PdfRowRecord에 페이지 필드가 있다고 가정)
+            if (rows != null && !rows.isEmpty()) {
+                int maxPageIndex = -1;
 
-        return new FileSystemResource(out);
+                for (PdfRowRecord r : rows) {
+                    if (r != null) {
+                        maxPageIndex = Math.max(maxPageIndex, r.getPageIndex());
+                    }
+                }
+                pageCount = (maxPageIndex >= 0) ? maxPageIndex + 1 : 0;
+            }
+
+            // 2) compute hits
+            long c0 = System.nanoTime();
+            List<PdfRowRecord> hits = (computeHitsFn != null)
+                    ? computeHitsFn.apply(rows)
+                    : rows;
+            computeMs = (System.nanoTime() - c0) / 1_000_000;
+
+            hitsCount = (hits != null) ? hits.size() : 0;
+
+            // 3) write (엑셀 등)
+            Path out = resolveHighlightedOutputPath(bundleKey, target, condition); // 기존 함수 재사용
+            long w0 = System.nanoTime();
+            if (writeFn != null) {
+                writeFn.accept(hits, out);
+            }
+            writeMs = (System.nanoTime() - w0) / 1_000_000;
+
+            long totalMs = (System.nanoTime() - t0) / 1_000_000;
+
+            log.info("EXCEL_METRIC runId={} outTag={} bundleKey={} target={} condition={} pageCount={} rows={} hits={} parseMs={} computeMs={} writeMs={} totalMs={}",
+                    runId, outTag, bundleKey, target, condition, pageCount, rowsTotal, hitsCount, parseMs, computeMs, writeMs, totalMs);
+
+            return new FileSystemResource(out);
+
+        } catch (IOException e) {
+            throw new BaseException(ExceptionEnum.FILE_READ_ERROR);
+        } finally {
+            if (originalPdfPath != null) {
+                try {
+                    Files.deleteIfExists(originalPdfPath);
+                } catch (IOException ignore) {
+                }
+            }
+        }
     }
+
+
 
     private User getUser(UUID id) {
         return userRepository.findById(id)

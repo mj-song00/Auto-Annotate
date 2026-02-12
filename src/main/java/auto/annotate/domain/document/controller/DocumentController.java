@@ -52,14 +52,17 @@ public class DocumentController {
         return ResponseEntity.status(HttpStatus.OK).body(response);
     }
 
-
+    /**
+     * (현재 프론트에서 사용하지 않음)
+     * 향후 하이라이트 PDF 확인 기능을 위해 유지 중.
+     */
     @GetMapping("/{documentId}/highlighted")
     public ResponseEntity<Resource> getHighlightedDocument(
             @PathVariable UUID documentId,
             @RequestParam(name = "condition", defaultValue = "0") int condition,
             @RequestParam(name = "download", defaultValue = "false") boolean download
     ) {
-        log.info("🔥 highlighted 요청 documentId={}, condition={}", documentId, condition);
+        log.info("highlighted 요청 documentId={}, condition={}", documentId, condition);
 
         Resource resource = documentService.loadHighlightedFileAsResource(documentId, condition);
 

@@ -14,7 +14,5 @@ public interface DocumentService {
 
    Resource loadHighlightedFileAsResource(UUID documentId, int condition);
 
-//   Resource loadHighlightedByBundle(UUID documentId, int condition);
-
    Resource downloadExcelByCondition(UUID documentId, int condition);
 }
