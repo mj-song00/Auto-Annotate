@@ -1,5 +1,3 @@
-let currentProfile = null;
-
 let currentFolderId = null;
 let documentsByTarget = {};
 
