@@ -1,6 +1,9 @@
 package auto.annotate.common.exception;
 
+import auto.annotate.common.config.DiscordNotifier;
 import auto.annotate.common.response.ApiResponse;
+import jakarta.servlet.http.HttpServletRequest;
+import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.http.ResponseEntity;
@@ -9,18 +12,65 @@ import org.springframework.validation.FieldError;
 import org.springframework.web.bind.MethodArgumentNotValidException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
+import org.springframework.web.context.request.RequestContextHolder;
+import org.springframework.web.context.request.ServletRequestAttributes;
 
 import java.sql.SQLIntegrityConstraintViolationException;
+import java.util.EnumSet;
 import java.util.HashMap;
 import java.util.Map;
 
 @Slf4j
 @RestControllerAdvice
+@RequiredArgsConstructor
 public class GlobalExceptionHandler {
     // BaseException 예외 = 정의된 예외(BaseException)를 처리
     @ExceptionHandler(BaseException.class)
     public ResponseEntity<ApiResponse<?>> handleBaseException(BaseException ex) {
         log.error("BaseException: ", ex);
+
+        if (ex.getExceptionEnum() != null && DISCORD_NOTIFY_ENUMS.contains(ex.getExceptionEnum())) {
+            HttpServletRequest request = getCurrentRequest();
+
+            String url = "(unknown)";
+            String method = "(unknown)";
+            String ip = "(unknown)";
+            String ua = "(unknown)";
+
+            if (request != null) {
+                String qs = request.getQueryString();
+                url = request.getRequestURI() + (qs != null ? "?" + qs : "");
+                method = request.getMethod();
+                ua = String.valueOf(request.getHeader("User-Agent"));
+
+                String xff = request.getHeader("X-Forwarded-For");
+                if (xff != null && !xff.isBlank()) {
+                    ip = xff.split(",")[0].trim();
+                } else {
+                    ip = request.getRemoteAddr();
+                }
+            }
+
+            String message = """
+                서버 에러 알림(BaseException)
+                url: %s
+                method: %s
+                ip: %s
+                ua: %s
+                enum: %s
+                msg: %s
+                """.formatted(
+                    url,
+                    method,
+                    ip,
+                    ua,
+                    ex.getExceptionEnum().name(),
+                    ex.getMessage()
+            );
+
+            discordNotifier.sendError(message);
+        }
+
         return ResponseEntity.status(ex.getStatus())
                 .body(ApiResponse.errorWithOutData(ex.getExceptionEnum(), ex.getStatus()));
     }
@@ -75,8 +125,101 @@ public class GlobalExceptionHandler {
     @ExceptionHandler(java.lang.Exception.class)
     public ResponseEntity<ApiResponse<?>> handleOtherExceptions(java.lang.Exception ex) {
         log.error("Unexpected exception: ", ex);
+
+        HttpServletRequest request = getCurrentRequest();
+
+        String url = "(unknown)";
+        String method = "(unknown)";
+        String ip = "(unknown)";
+        String ua = "(unknown)";
+
+        if (request != null) {
+            String qs = request.getQueryString();
+            url = request.getRequestURI() + (qs != null ? "?" + qs : "");
+            method = request.getMethod();
+            ua = String.valueOf(request.getHeader("User-Agent"));
+
+            String xff = request.getHeader("X-Forwarded-For");
+            if (xff != null && !xff.isBlank()) {
+                ip = xff.split(",")[0].trim();
+            } else {
+                ip = request.getRemoteAddr();
+            }
+        }
+
+        // 정적 리소스/자동 요청 노이즈는 알림 제외
+        if (ex instanceof org.springframework.web.servlet.resource.NoResourceFoundException) {
+            String p = request != null ? request.getRequestURI() : "";
+            if ("/favicon.ico".equals(p) || p.startsWith("/.well-known/") || "/robots.txt".equals(p)) {
+                return ResponseEntity.status(ExceptionEnum.INTERNAL_SERVER_ERROR.getStatus())
+                        .body(ApiResponse.errorWithOutData(
+                                ExceptionEnum.INTERNAL_SERVER_ERROR,
+                                ExceptionEnum.INTERNAL_SERVER_ERROR.getStatus()
+                        ));
+            }
+        }
+
+        // root cause 추출 (진짜 원인)
+        Throwable root = ex;
+        while (root.getCause() != null && root.getCause() != root) {
+            root = root.getCause();
+        }
+
+        String rootType = root.getClass().getName();
+        String rootMsg = root.getMessage();
+        if (rootMsg == null || rootMsg.isBlank()) rootMsg = "(no message)";
+
+        String tag = (ex instanceof software.amazon.awssdk.core.exception.SdkClientException)
+                ? "S3_GET_FAIL"
+                : "UNEXPECTED";
+
+        String message = """
+            서버 에러 알림(%s)
+            url: %s
+            method: %s
+            ip: %s
+            ua: %s
+            type: %s
+            msg: %s
+            rootType: %s
+            rootMsg: %s
+            """.formatted(
+                tag,
+                url,
+                method,
+                ip,
+                ua,
+                ex.getClass().getName(),
+                ex.getMessage(),
+                rootType,
+                rootMsg
+        );
+
+        discordNotifier.sendError(message);
+
         return ResponseEntity.status(ExceptionEnum.INTERNAL_SERVER_ERROR.getStatus())
-                .body(ApiResponse.errorWithOutData(ExceptionEnum.INTERNAL_SERVER_ERROR,
-                        ExceptionEnum.INTERNAL_SERVER_ERROR.getStatus()));
+                .body(ApiResponse.errorWithOutData(
+                        ExceptionEnum.INTERNAL_SERVER_ERROR,
+                        ExceptionEnum.INTERNAL_SERVER_ERROR.getStatus()
+                ));
+    }
+
+    private final DiscordNotifier discordNotifier;
+    private static final EnumSet<ExceptionEnum> DISCORD_NOTIFY_ENUMS = EnumSet.of(
+            ExceptionEnum.UPLOAD_DIRECTORY_CREATE_FAILED,
+            ExceptionEnum.FILE_READ_ERROR,
+            ExceptionEnum.FILE_WRITE_ERROR,
+            ExceptionEnum.FILE_SAVE_FAILED,
+            ExceptionEnum.INTERNAL_SERVER_ERROR
+    );
+
+    private HttpServletRequest getCurrentRequest() {
+        try {
+            ServletRequestAttributes attrs =
+                    (ServletRequestAttributes) RequestContextHolder.getRequestAttributes();
+            return attrs != null ? attrs.getRequest() : null;
+        } catch (Exception e) {
+            return null;
+        }
     }
 }
