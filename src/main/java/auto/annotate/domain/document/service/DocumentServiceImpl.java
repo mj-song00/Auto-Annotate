@@ -35,10 +35,12 @@ import org.springframework.core.io.Resource;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.multipart.MultipartFile;
+import software.amazon.awssdk.core.ResponseBytes;
 import software.amazon.awssdk.core.sync.RequestBody;
 import software.amazon.awssdk.core.sync.ResponseTransformer;
 import software.amazon.awssdk.services.s3.S3Client;
 import software.amazon.awssdk.services.s3.model.GetObjectRequest;
+import software.amazon.awssdk.services.s3.model.GetObjectResponse;
 import software.amazon.awssdk.services.s3.model.PutObjectRequest;
 
 import java.io.IOException;
@@ -1853,7 +1855,8 @@ public class DocumentServiceImpl implements DocumentService {
                     .key(s3Key)
                     .build();
 
-            s3Client.getObject(getReq, ResponseTransformer.toFile(originalPdfPath));
+            ResponseBytes<GetObjectResponse> bytes = s3Client.getObjectAsBytes(getReq);
+            Files.write(originalPdfPath, bytes.asByteArray());
 
             // 1) parse
             long p0 = System.nanoTime();
@@ -1911,8 +1914,6 @@ public class DocumentServiceImpl implements DocumentService {
             }
         }
     }
-
-
 
     private User getUser(UUID id) {
         return userRepository.findById(id)
