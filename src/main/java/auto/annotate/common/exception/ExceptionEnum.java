@@ -11,14 +11,14 @@ public enum ExceptionEnum {
     INTERNAL_SERVER_ERROR(HttpStatus.INTERNAL_SERVER_ERROR, "INTERNAL_SERVER_ERROR",
             "서버에서 문제가 발생하였습니다."),
 
-    UPLOAD_DIRECTORY_CREATE_FAILED(HttpStatus.BAD_REQUEST,"UPLOAD_DIRECTORY_CREATE_FAILED", "파일 업로드 디렉터리를 생성할 수 없습니다."),
+    UPLOAD_DIRECTORY_CREATE_FAILED(HttpStatus.INTERNAL_SERVER_ERROR,"UPLOAD_DIRECTORY_CREATE_FAILED", "파일 업로드 디렉터리를 생성할 수 없습니다."),
     INVALID_FOLDER_NAME(HttpStatus.BAD_REQUEST,"INVALID_FOLDER_NAME","폴더 이름을 확인해주세요"),
 
     DOCUMENT_NOT_FOUND(HttpStatus.BAD_REQUEST,"DOCUMENT_NOT_FOUND","첨부파일을 확인해 주세요"),
-    FILE_READ_ERROR(HttpStatus.BAD_REQUEST, "FILE_READ_ERROR", "pdf를 읽는 중 오류가 발생하였습니다"),
-    FILE_WRITE_ERROR(HttpStatus.BAD_REQUEST, "FILE_WRITE_ERROR","pdf를 수정하던중 오류가 발생하였습니다" ),
+    FILE_READ_ERROR(HttpStatus.INTERNAL_SERVER_ERROR, "FILE_READ_ERROR", "pdf를 읽는 중 오류가 발생하였습니다"),
+    FILE_WRITE_ERROR(HttpStatus.INTERNAL_SERVER_ERROR, "FILE_WRITE_ERROR","pdf를 수정하던중 오류가 발생하였습니다" ),
     FILE_NOT_FOUND(HttpStatus.BAD_REQUEST,"FILE_NOT_FOUND", "file을 찾지 못했습니다" ),
-    FILE_SAVE_FAILED(HttpStatus.BAD_REQUEST, "FILE_SAVE_FAILED","저장이 실패하였습니다." ),
+    FILE_SAVE_FAILED(HttpStatus.INTERNAL_SERVER_ERROR, "FILE_SAVE_FAILED","저장이 실패하였습니다." ),
 
     USER_NOT_FOUND(HttpStatus.BAD_REQUEST,"USER_NOT_FOUND" , "유저를 확인할 수 없습니다." ),
     USER_ALREADY_EXISTS(HttpStatus.BAD_REQUEST, "HttpStatus.BAD_REQUEST","이미 존재하는 계정입니다."),
