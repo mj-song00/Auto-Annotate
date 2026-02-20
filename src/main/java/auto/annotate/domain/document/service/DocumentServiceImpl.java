@@ -1,7 +1,10 @@
 package auto.annotate.domain.document.service;
 
+import auto.annotate.common.entity.ExcelJobLog;
+import auto.annotate.common.enums.JobStatus;
 import auto.annotate.common.exception.BaseException;
 import auto.annotate.common.exception.ExceptionEnum;
+import auto.annotate.common.repository.ExcelJobLogRepository;
 import auto.annotate.common.utils.SurgeryTokenMatcher;
 import auto.annotate.domain.document.dto.HighlightTarget;
 import auto.annotate.domain.document.dto.HighlightType;
@@ -39,6 +42,7 @@ import software.amazon.awssdk.core.ResponseBytes;
 import software.amazon.awssdk.core.sync.RequestBody;
 import software.amazon.awssdk.core.sync.ResponseTransformer;
 import software.amazon.awssdk.services.s3.S3Client;
+import software.amazon.awssdk.services.s3.model.DeleteObjectRequest;
 import software.amazon.awssdk.services.s3.model.GetObjectRequest;
 import software.amazon.awssdk.services.s3.model.GetObjectResponse;
 import software.amazon.awssdk.services.s3.model.PutObjectRequest;
@@ -67,6 +71,7 @@ public class DocumentServiceImpl implements DocumentService {
     private final SurgeryTokenMatcher surgeryTokenMatcher;
     private final UserRepository userRepository;
     private final FolderRepository folderRepository;
+    private final ExcelJobLogRepository excelJobLogRepository;
 
     private final S3Client s3Client;
 
@@ -116,6 +121,9 @@ public class DocumentServiceImpl implements DocumentService {
 
             Path targetLocation = uploadPath.resolve(storedFilename);
 
+            String key = null;
+            boolean s3Uploaded = false;
+
             try {
                 // 1) 로컬 임시 저장
                 Files.copy(
@@ -135,7 +143,7 @@ public class DocumentServiceImpl implements DocumentService {
                 }
 
                 // 3) S3 key 생성 (prefix 없음)
-                String key = bundleKey + "/" + storedFilename;
+                key = bundleKey + "/" + storedFilename;
 
                 // 4) S3 업로드
                 try {
@@ -146,6 +154,7 @@ public class DocumentServiceImpl implements DocumentService {
                             .build();
 
                     s3Client.putObject(putReq, RequestBody.fromFile(targetLocation));
+                    s3Uploaded = true;
                 } catch (Exception e) {
                     throw new BaseException(ExceptionEnum.FILE_SAVE_FAILED);
                 }
@@ -160,11 +169,45 @@ public class DocumentServiceImpl implements DocumentService {
                         folder
                 );
 
-                savedDocuments.add(documentRepository.save(document));
+                try {
+                    savedDocuments.add(documentRepository.save(document));
+                } catch (Exception e) {
+                    // DB 저장 실패 시 S3 업로드된 파일 정리 (트랜잭션 롤백과 별개로 S3는 남기 때문에)
+                    if (s3Uploaded && key != null) {
+                        try {
+                            s3Client.deleteObject(
+                                    DeleteObjectRequest.builder()
+                                            .bucket(bucket)
+                                            .key(key)
+                                            .build()
+                            );
+                        } catch (Exception ignore) {}
+                    }
+                    throw e;
+                }
 
             } catch (IOException e) {
+                // 로컬 파일 처리 실패
+                throw new BaseException(ExceptionEnum.FILE_SAVE_FAILED);
+            } catch (BaseException e) {
+                // BaseException은 그대로 전파
+                throw e;
+            } catch (Exception e) {
+                // 그 외 예외도 통일
+                // (S3 업로드 이후 여기로 떨어질 수 있으니 방어적으로 정리)
+                if (s3Uploaded && key != null) {
+                    try {
+                        s3Client.deleteObject(
+                                DeleteObjectRequest.builder()
+                                        .bucket(bucket)
+                                        .key(key)
+                                        .build()
+                        );
+                    } catch (Exception ignore) {}
+                }
                 throw new BaseException(ExceptionEnum.FILE_SAVE_FAILED);
             } finally {
+                // finally에서는 S3 삭제가 아니라 로컬 임시파일만 삭제
                 try { Files.deleteIfExists(targetLocation); } catch (IOException ignore) {}
             }
         }
@@ -1841,12 +1884,16 @@ public class DocumentServiceImpl implements DocumentService {
                 .orElseThrow(() -> new BaseException(ExceptionEnum.DOCUMENT_NOT_FOUND));
         String bundleKey = base.getBundleKey();
 
+        UUID userId = base.getUser().getId();
+
         Document targetDoc = documentRepository.findByBundleKeyAndTarget(bundleKey, target)
                 .orElseThrow(() -> new BaseException(ExceptionEnum.DOCUMENT_NOT_FOUND));
 
         String s3Key = targetDoc.getFileUrl();
 
         Path originalPdfPath = null;
+        Path out = null;
+
         try {
             originalPdfPath = Files.createTempFile("pdf-", ".pdf");
 
@@ -1858,19 +1905,16 @@ public class DocumentServiceImpl implements DocumentService {
             ResponseBytes<GetObjectResponse> bytes = s3Client.getObjectAsBytes(getReq);
             Files.write(originalPdfPath, bytes.asByteArray());
 
-            // 1) parse
             long p0 = System.nanoTime();
             List<PdfRowRecord> rows = (parseFn != null)
                     ? parseFn.apply(originalPdfPath)
-                    : parsePdfToRows(originalPdfPath, target); // targetToRender 제거: target 사용
+                    : parsePdfToRows(originalPdfPath, target);
             parseMs = (System.nanoTime() - p0) / 1_000_000;
 
             rowsTotal = (rows != null) ? rows.size() : 0;
 
-            // pageCount (PdfRowRecord에 페이지 필드가 있다고 가정)
             if (rows != null && !rows.isEmpty()) {
                 int maxPageIndex = -1;
-
                 for (PdfRowRecord r : rows) {
                     if (r != null) {
                         maxPageIndex = Math.max(maxPageIndex, r.getPageIndex());
@@ -1879,7 +1923,6 @@ public class DocumentServiceImpl implements DocumentService {
                 pageCount = (maxPageIndex >= 0) ? maxPageIndex + 1 : 0;
             }
 
-            // 2) compute hits
             long c0 = System.nanoTime();
             List<PdfRowRecord> hits = (computeHitsFn != null)
                     ? computeHitsFn.apply(rows)
@@ -1888,8 +1931,9 @@ public class DocumentServiceImpl implements DocumentService {
 
             hitsCount = (hits != null) ? hits.size() : 0;
 
-            // 3) write (엑셀 등)
-            Path out = resolveHighlightedOutputPath(bundleKey, target, condition); // 기존 함수 재사용
+            // 엑셀 출력 경로는 highlighted가 아니라 excel이 더 자연스러움 (이미 메서드 있음)
+            out = resolveExcelOutputPath(bundleKey, outTag);
+
             long w0 = System.nanoTime();
             if (writeFn != null) {
                 writeFn.accept(hits, out);
@@ -1898,19 +1942,77 @@ public class DocumentServiceImpl implements DocumentService {
 
             long totalMs = (System.nanoTime() - t0) / 1_000_000;
 
+            excelJobLogRepository.save(
+                    ExcelJobLog.builder()
+                            .documentId(documentId)
+                            .userId(userId)
+                            .bundleKey(bundleKey)
+                            .s3Key(s3Key)
+                            .target(target)
+                            .condition(condition)
+                            .outTag(outTag)
+                            .runId(runId)
+                            .pageCount(pageCount >= 0 ? pageCount : null)
+                            .rowsTotal(rowsTotal)
+                            .hitsCount(hitsCount)
+                            .parseMs(parseMs)
+                            .computeMs(computeMs)
+                            .writeMs(writeMs)
+                            .totalMs(totalMs)
+                            .status(JobStatus.SUCCESS)
+                            .build()
+            );
+
             log.info("EXCEL_METRIC runId={} outTag={} bundleKey={} target={} condition={} pageCount={} rows={} hits={} parseMs={} computeMs={} writeMs={} totalMs={}",
                     runId, outTag, bundleKey, target, condition, pageCount, rowsTotal, hitsCount, parseMs, computeMs, writeMs, totalMs);
 
             return new FileSystemResource(out);
 
-        } catch (IOException e) {
+        } catch (Exception e) {
+            long totalMs = (System.nanoTime() - t0) / 1_000_000;
+
+            String errorEnum = null;
+            String errorType = e.getClass().getSimpleName();
+            String errorMessage = e.getMessage();
+
+            if (errorMessage != null && errorMessage.length() > 500) {
+                errorMessage = errorMessage.substring(0, 500);
+            }
+
+            if (e instanceof BaseException be) {
+                errorEnum = be.getExceptionEnum().name();
+            }
+
+            excelJobLogRepository.save(
+                    ExcelJobLog.builder()
+                            .documentId(documentId)
+                            .userId(userId)
+                            .bundleKey(bundleKey)
+                            .s3Key(s3Key)
+                            .target(target)
+                            .condition(condition)
+                            .outTag(outTag)
+                            .runId(runId)
+                            .pageCount(pageCount >= 0 ? pageCount : null)
+                            .rowsTotal(rowsTotal == 0 ? null : rowsTotal)
+                            .hitsCount(hitsCount == 0 ? null : hitsCount)
+                            .parseMs(parseMs == 0L ? null : parseMs)
+                            .computeMs(computeMs == 0L ? null : computeMs)
+                            .writeMs(writeMs == 0L ? null : writeMs)
+                            .totalMs(totalMs)
+                            .status(JobStatus.FAILED)
+                            .errorEnum(errorEnum)
+                            .errorType(errorType)
+                            .errorMessage(errorMessage)
+                            .build()
+            );
+
+            if (e instanceof BaseException) throw (BaseException) e;
             throw new BaseException(ExceptionEnum.FILE_READ_ERROR);
+
         } finally {
             if (originalPdfPath != null) {
-                try {
-                    Files.deleteIfExists(originalPdfPath);
-                } catch (IOException ignore) {
-                }
+                try { Files.deleteIfExists(originalPdfPath); } catch (IOException ignore) {}
             }
         }
     }
