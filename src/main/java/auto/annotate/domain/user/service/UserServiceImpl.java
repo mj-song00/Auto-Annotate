@@ -17,6 +17,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.util.Optional;
+import java.util.UUID;
 
 @Slf4j
 @Service
@@ -144,5 +145,10 @@ public class UserServiceImpl implements UserService{
         // 로그아웃 처리 (리프레시 토큰 블랙리스트 및 쿠키 삭제)
         authService.logout(refreshToken, response);
 
+    }
+
+    public User findByIdOrThrow(UUID id) {
+        return userRepository.findById(id)
+                .orElseThrow(() -> new BaseException(ExceptionEnum.USER_NOT_FOUND));
     }
 }

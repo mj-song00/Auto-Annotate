@@ -19,7 +19,7 @@ import auto.annotate.domain.highlight.overlay.PdfOverlayRenderer;
 import auto.annotate.domain.highlight.service.HighlightService;
 import auto.annotate.domain.user.dto.AuthUser;
 import auto.annotate.domain.user.entity.User;
-import auto.annotate.domain.user.reposotiry.UserRepository;
+import auto.annotate.domain.user.service.UserServiceImpl;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.pdfbox.pdmodel.PDDocument;
@@ -69,9 +69,9 @@ public class DocumentServiceImpl implements DocumentService {
     private final DocumentRepository documentRepository;
     private final HighlightService highlightService;
     private final SurgeryTokenMatcher surgeryTokenMatcher;
-    private final UserRepository userRepository;
     private final FolderRepository folderRepository;
     private final ExcelJobLogRepository excelJobLogRepository;
+    private final UserServiceImpl userService;
 
     private final S3Client s3Client;
 
@@ -89,7 +89,7 @@ public class DocumentServiceImpl implements DocumentService {
             AuthUser authUser,
             SaveFolderRequest saveFolderRequest
     ) {
-        User user = getUser(authUser.getId());
+        User user = userService.findByIdOrThrow(authUser.getId());
 
         String bundleKey = UUID.randomUUID().toString();
         List<Document> savedDocuments = new ArrayList<>();
@@ -2015,10 +2015,5 @@ public class DocumentServiceImpl implements DocumentService {
                 try { Files.deleteIfExists(originalPdfPath); } catch (IOException ignore) {}
             }
         }
-    }
-
-    private User getUser(UUID id) {
-        return userRepository.findById(id)
-                .orElseThrow(() -> new BaseException(ExceptionEnum.USER_NOT_FOUND));
     }
 }

@@ -10,7 +10,6 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 
 import java.util.*;
-import java.util.regex.Pattern;
 import java.util.stream.Collectors;
 
 import static auto.annotate.common.utils.HospitalKeyUtils.isPharmacy;

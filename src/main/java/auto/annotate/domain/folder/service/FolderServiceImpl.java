@@ -12,6 +12,7 @@ import auto.annotate.domain.folder.repository.FolderRepository;
 import auto.annotate.domain.user.dto.AuthUser;
 import auto.annotate.domain.user.entity.User;
 import auto.annotate.domain.user.reposotiry.UserRepository;
+import auto.annotate.domain.user.service.UserServiceImpl;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.data.domain.Page;
@@ -20,7 +21,6 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.time.LocalDateTime;
-import java.util.ArrayList;
 import java.util.List;
 import java.util.UUID;
 import java.util.stream.Collectors;
@@ -30,13 +30,13 @@ import java.util.stream.Collectors;
 @RequiredArgsConstructor
 public class FolderServiceImpl implements FolderService {
 
-    private final UserRepository userRepository;
     private final FolderRepository folderRepository;
     private final DocumentRepository documentRepository;
+    private final UserServiceImpl userService;
 
     @Override
     public Page<FolderResponse> getFolders(AuthUser authUser, Pageable pageable) {
-        User user = getUser(authUser.getId());
+        User user = userService.findByIdOrThrow(authUser.getId());
 
         Page<Folder> folders = folderRepository.findByUserAndDeletedAtIsNullOrderByCreatedAtDesc(user, pageable);
 
@@ -65,7 +65,7 @@ public class FolderServiceImpl implements FolderService {
 
     @Override
     public List<FolderDocumentResponse> getDocuments(AuthUser authUser, UUID folderId) {
-        User user = getUser(authUser.getId());
+        User user = userService.findByIdOrThrow(authUser.getId());
 
         Folder folder = folderRepository.findByIdAndDeletedAtIsNull(folderId)
                 .orElseThrow(() -> new BaseException(ExceptionEnum.FOLDER_NOT_FOUND));
@@ -96,13 +96,8 @@ public class FolderServiceImpl implements FolderService {
         log.info("FOLDER_CLEANUP deleted={} elapsedMs={}", targets.size(), ms);
     }
 
-    private User getUser(UUID id) {
-        return userRepository.findById(id)
-                .orElseThrow(() -> new BaseException(ExceptionEnum.USER_NOT_FOUND));
-    }
-
     private Folder getFolder(AuthUser authUser, UUID id) {
-        getUser(authUser.getId());
+        userService.findByIdOrThrow(authUser.getId());
 
         return folderRepository.findById(id)
                 .orElseThrow(() -> new BaseException(ExceptionEnum.FOLDER_NOT_FOUND));
