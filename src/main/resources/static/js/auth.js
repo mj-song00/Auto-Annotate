@@ -15,10 +15,37 @@ function handleUnauthorized() {
 
 async function checkAuth() {
     const token = getAccessToken();
+
+    // accessToken이 없으면 refresh로 재발급 먼저 시도
     if (!token || token.trim() === "") {
-        alert("로그인이 필요합니다.");
-        window.location.href = "/login";
-        return false;
+        try {
+            const refreshResponse = await fetch("/api/v1/auth/refresh-token", {
+                method: "POST",
+                credentials: "include"
+            });
+
+            if (!refreshResponse.ok) {
+                alert("로그인이 필요합니다.");
+                window.location.href = "/login";
+                return false;
+            }
+
+            const refreshResult = await refreshResponse.json().catch(() => null);
+            const newAccessToken = refreshResult?.data?.accessToken;
+
+            if (!newAccessToken || String(newAccessToken).trim() === "") {
+                alert("로그인이 필요합니다.");
+                window.location.href = "/login";
+                return false;
+            }
+
+            localStorage.setItem("accessToken", newAccessToken);
+            return true;
+        } catch (e) {
+            alert("로그인이 필요합니다.");
+            window.location.href = "/login";
+            return false;
+        }
     }
     return true;
 }
