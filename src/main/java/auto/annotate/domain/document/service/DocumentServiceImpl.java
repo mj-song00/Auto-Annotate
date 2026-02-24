@@ -42,10 +42,7 @@ import software.amazon.awssdk.core.ResponseBytes;
 import software.amazon.awssdk.core.sync.RequestBody;
 import software.amazon.awssdk.core.sync.ResponseTransformer;
 import software.amazon.awssdk.services.s3.S3Client;
-import software.amazon.awssdk.services.s3.model.DeleteObjectRequest;
-import software.amazon.awssdk.services.s3.model.GetObjectRequest;
-import software.amazon.awssdk.services.s3.model.GetObjectResponse;
-import software.amazon.awssdk.services.s3.model.PutObjectRequest;
+import software.amazon.awssdk.services.s3.model.*;
 
 import java.io.IOException;
 import java.io.OutputStream;
@@ -124,8 +121,11 @@ public class DocumentServiceImpl implements DocumentService {
             String key = null;
             boolean s3Uploaded = false;
 
+            String uploadId = null;
+            List<CompletedPart> completedParts = new ArrayList<>();
+
             try {
-                // 1) 로컬 임시 저장
+                // 1) 로컬 임시 저장 (스트리밍)
                 Files.copy(
                         multipartFile.getInputStream(),
                         targetLocation,
@@ -145,17 +145,85 @@ public class DocumentServiceImpl implements DocumentService {
                 // 3) S3 key 생성 (prefix 없음)
                 key = bundleKey + "/" + storedFilename;
 
-                // 4) S3 업로드
+                // 4) S3 업로드 (Multipart Upload)
                 try {
-                    PutObjectRequest putReq = PutObjectRequest.builder()
-                            .bucket(bucket)
-                            .key(key)
-                            .contentType("application/pdf")
+                    CreateMultipartUploadResponse createRes = s3Client.createMultipartUpload(
+                            CreateMultipartUploadRequest.builder()
+                                    .bucket(bucket)
+                                    .key(key)
+                                    .contentType("application/pdf")
+                                    .build()
+                    );
+                    uploadId = createRes.uploadId();
+
+                    final long partSize = 16L * 1024L * 1024L; // 16MB (최소 5MB, 마지막 파트 제외)
+                    long fileSize = Files.size(targetLocation);
+
+                    int partNumber = 1;
+
+                    try (java.io.RandomAccessFile raf = new java.io.RandomAccessFile(targetLocation.toFile(), "r")) {
+                        long position = 0;
+
+                        while (position < fileSize) {
+                            long bytesToReadLong = Math.min(partSize, fileSize - position);
+                            int bytesToRead = (int) bytesToReadLong;
+
+                            byte[] buffer = new byte[bytesToRead];
+                            raf.seek(position);
+                            raf.readFully(buffer);
+
+                            UploadPartResponse uploadPartRes = s3Client.uploadPart(
+                                    UploadPartRequest.builder()
+                                            .bucket(bucket)
+                                            .key(key)
+                                            .uploadId(uploadId)
+                                            .partNumber(partNumber)
+                                            .contentLength((long) bytesToRead)
+                                            .build(),
+                                    RequestBody.fromBytes(buffer)
+                            );
+
+                            completedParts.add(
+                                    CompletedPart.builder()
+                                            .partNumber(partNumber)
+                                            .eTag(uploadPartRes.eTag())
+                                            .build()
+                            );
+
+                            position += bytesToReadLong;
+                            partNumber++;
+                        }
+                    }
+
+                    CompletedMultipartUpload cmu = CompletedMultipartUpload.builder()
+                            .parts(completedParts)
                             .build();
 
-                    s3Client.putObject(putReq, RequestBody.fromFile(targetLocation));
+                    s3Client.completeMultipartUpload(
+                            CompleteMultipartUploadRequest.builder()
+                                    .bucket(bucket)
+                                    .key(key)
+                                    .uploadId(uploadId)
+                                    .multipartUpload(cmu)
+                                    .build()
+                    );
+
                     s3Uploaded = true;
+
                 } catch (Exception e) {
+                    // 업로드 도중 실패하면 반드시 abort
+                    if (uploadId != null && key != null) {
+                        try {
+                            s3Client.abortMultipartUpload(
+                                    AbortMultipartUploadRequest.builder()
+                                            .bucket(bucket)
+                                            .key(key)
+                                            .uploadId(uploadId)
+                                            .build()
+                            );
+                        } catch (Exception ignore) {
+                        }
+                    }
                     throw new BaseException(ExceptionEnum.FILE_SAVE_FAILED);
                 }
 
@@ -172,8 +240,42 @@ public class DocumentServiceImpl implements DocumentService {
                 try {
                     savedDocuments.add(documentRepository.save(document));
                 } catch (Exception e) {
-                    // DB 저장 실패 시 S3 업로드된 파일 정리 (트랜잭션 롤백과 별개로 S3는 남기 때문에)
-                    if (s3Uploaded && key != null) {
+                    // DB 저장 실패 시 S3 정리
+                    if (key != null) {
+                        if (s3Uploaded) {
+                            try {
+                                s3Client.deleteObject(
+                                        DeleteObjectRequest.builder()
+                                                .bucket(bucket)
+                                                .key(key)
+                                                .build()
+                                );
+                            } catch (Exception ignore) {
+                            }
+                        } else if (uploadId != null) {
+                            try {
+                                s3Client.abortMultipartUpload(
+                                        AbortMultipartUploadRequest.builder()
+                                                .bucket(bucket)
+                                                .key(key)
+                                                .uploadId(uploadId)
+                                                .build()
+                                );
+                            } catch (Exception ignore) {
+                            }
+                        }
+                    }
+                    throw e;
+                }
+
+            } catch (IOException e) {
+                throw new BaseException(ExceptionEnum.FILE_SAVE_FAILED);
+            } catch (BaseException e) {
+                throw e;
+            } catch (Exception e) {
+                // 그 외 예외도 통일 + 방어적으로 정리
+                if (key != null) {
+                    if (s3Uploaded) {
                         try {
                             s3Client.deleteObject(
                                     DeleteObjectRequest.builder()
@@ -181,34 +283,28 @@ public class DocumentServiceImpl implements DocumentService {
                                             .key(key)
                                             .build()
                             );
-                        } catch (Exception ignore) {}
+                        } catch (Exception ignore) {
+                        }
+                    } else if (uploadId != null) {
+                        try {
+                            s3Client.abortMultipartUpload(
+                                    AbortMultipartUploadRequest.builder()
+                                            .bucket(bucket)
+                                            .key(key)
+                                            .uploadId(uploadId)
+                                            .build()
+                            );
+                        } catch (Exception ignore) {
+                        }
                     }
-                    throw e;
-                }
-
-            } catch (IOException e) {
-                // 로컬 파일 처리 실패
-                throw new BaseException(ExceptionEnum.FILE_SAVE_FAILED);
-            } catch (BaseException e) {
-                // BaseException은 그대로 전파
-                throw e;
-            } catch (Exception e) {
-                // 그 외 예외도 통일
-                // (S3 업로드 이후 여기로 떨어질 수 있으니 방어적으로 정리)
-                if (s3Uploaded && key != null) {
-                    try {
-                        s3Client.deleteObject(
-                                DeleteObjectRequest.builder()
-                                        .bucket(bucket)
-                                        .key(key)
-                                        .build()
-                        );
-                    } catch (Exception ignore) {}
                 }
                 throw new BaseException(ExceptionEnum.FILE_SAVE_FAILED);
             } finally {
-                // finally에서는 S3 삭제가 아니라 로컬 임시파일만 삭제
-                try { Files.deleteIfExists(targetLocation); } catch (IOException ignore) {}
+                // 로컬 임시파일만 삭제
+                try {
+                    Files.deleteIfExists(targetLocation);
+                } catch (IOException ignore) {
+                }
             }
         }
         return savedDocuments;
