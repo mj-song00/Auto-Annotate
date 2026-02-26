@@ -4,7 +4,7 @@ import auto.annotate.common.config.PasswordEncoder;
 import auto.annotate.common.exception.BaseException;
 import auto.annotate.common.exception.ExceptionEnum;
 import auto.annotate.common.jwt.JwtUtil;
-import auto.annotate.common.repository.RefreshTokenRepository;
+import auto.annotate.common.jwt.TokenHashUtil;
 import auto.annotate.domain.user.dto.request.LoginRequest;
 import auto.annotate.domain.user.entity.User;
 import auto.annotate.domain.user.reposotiry.UserRepository;
@@ -12,24 +12,28 @@ import io.jsonwebtoken.Claims;
 import jakarta.servlet.http.HttpServletResponse;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
-import org.springframework.data.redis.core.RedisTemplate;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.ResponseCookie;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.time.LocalDateTime;
+import java.time.ZoneId;
+import java.util.Date;
 import java.util.UUID;
-import java.util.concurrent.TimeUnit;
 
 @Slf4j
 @Service
 @RequiredArgsConstructor
 public class AuthService {
+
     private final UserRepository userRepository;
     private final PasswordEncoder passwordEncoder;
     private final JwtUtil jwtUtil;
-    private final RedisTemplate<String, Object> redisTemplate;
-    private final RefreshTokenRepository refreshTokenRepository;
+
+    @Value("${jwt.refresh.pepper}")
+    private String refreshPepper;
 
     public String login(LoginRequest loginRequest) {
         User user = findByEmail(loginRequest.getEmail());
@@ -38,47 +42,45 @@ public class AuthService {
         return generateAccessToken(user);
     }
 
-    //AccessToken 재발급
+    // AccessToken 재발급 (Refresh 회전 + RDS 해시 비교)
     @Transactional
     public String refreshAccessToken(String refreshToken, HttpServletResponse response) {
         User user = validateRefreshToken(refreshToken);
-        long expiration = jwtUtil.getRemainingExpiration(refreshToken);
 
-        try {
-            refreshTokenRepository.addBlacklist(refreshToken, expiration);
-
-            String newRefreshToken = generateRefreshToken(user.getEmail());
-            saveRefreshToken(user.getEmail(), newRefreshToken);
-            setRefreshTokenCookie(response, newRefreshToken);
-        } catch (Exception e) {
-            log.error("Redis 처리 실패", e);
-        }
+        String newRefreshToken = generateRefreshToken(user.getEmail());
+        saveRefreshToken(user.getEmail(), newRefreshToken);
+        setRefreshTokenCookie(response, newRefreshToken);
 
         return generateAccessToken(user);
-
     }
 
     @Transactional
     public void logout(String refreshToken, HttpServletResponse response) {
-        User user = validateRefreshToken(refreshToken);
-
         try {
-            //Redis에서 refreshToken 삭제
-            redisTemplate.delete("refresh:" + user.getEmail());
+            if (refreshToken != null && jwtUtil.isTokenValid(refreshToken)) {
+                Claims claims = jwtUtil.extractClaims(refreshToken);
+                UUID userId = UUID.fromString(claims.getSubject());
+
+                User user = userRepository.findById(userId)
+                        .orElseThrow(() -> new BaseException(ExceptionEnum.USER_NOT_FOUND));
+
+                user.clearRefreshToken();
+            }
         } catch (Exception e) {
-            log.error("Redis 처리 실패", e);
+            log.warn("Logout refresh token cleanup failed", e);
         }
 
         // 쿠키 삭제
-        ResponseCookie deleteCookie = ResponseCookie.from("refreshToken", "") // 빈 문자열 사용
+        ResponseCookie deleteCookie = ResponseCookie.from("refreshToken", "")
                 .httpOnly(true)
                 .secure(true)
                 .path("/")
+                .sameSite("Strict")
                 .maxAge(0)
                 .build();
-        response.addHeader(HttpHeaders.SET_COOKIE, deleteCookie.toString());
-    }
 
+        response.setHeader(HttpHeaders.SET_COOKIE, deleteCookie.toString());
+    }
 
     // 리프레시 토큰 쿠키 설정
     public void setRefreshTokenCookie(HttpServletResponse response, String refreshToken) {
@@ -91,7 +93,6 @@ public class AuthService {
                 .build();
         response.addHeader(HttpHeaders.SET_COOKIE, cookie.toString());
     }
-
 
     // 이메일로 사용자 조회
     public User findByEmail(String email) {
@@ -124,14 +125,23 @@ public class AuthService {
         return jwtUtil.createRefreshToken(user.getId());
     }
 
+    // RDS에 refresh 해시 저장
+    @Transactional
     public void saveRefreshToken(String email, String refreshToken) {
-        String key = "auth:refresh:" + email;
-        redisTemplate.opsForValue().set(key, refreshToken, 7, TimeUnit.DAYS);
+        User user = findByEmail(email);
+
+        String hash = TokenHashUtil.sha256Base64(refreshToken, refreshPepper);
+
+        Date exp = jwtUtil.extractClaims(refreshToken).getExpiration();
+        LocalDateTime expiresAt =
+                exp.toInstant().atZone(ZoneId.systemDefault()).toLocalDateTime();
+
+        user.updateRefreshToken(hash, expiresAt);
     }
 
+    // RDS 해시 비교로 refresh 검증
     private User validateRefreshToken(String refreshToken) {
-        if (refreshToken == null || refreshTokenRepository.isBlacklisted(refreshToken)
-                || !jwtUtil.isTokenValid(refreshToken)) {
+        if (refreshToken == null || !jwtUtil.isTokenValid(refreshToken)) {
             throw new BaseException(ExceptionEnum.INVALID_REFRESH_TOKEN);
         }
 
@@ -141,10 +151,18 @@ public class AuthService {
         User user = userRepository.findById(userId)
                 .orElseThrow(() -> new BaseException(ExceptionEnum.USER_NOT_FOUND));
 
-        String storedToken = refreshTokenRepository.findByEmail(user.getEmail())
-                .orElseThrow(() -> new BaseException(ExceptionEnum.INVALID_REFRESH_TOKEN));
+        String storedHash = user.getRefreshTokenHash();
+        if (storedHash == null) {
+            throw new BaseException(ExceptionEnum.INVALID_REFRESH_TOKEN);
+        }
 
-        if (!storedToken.equals(refreshToken)) {
+        String incomingHash = TokenHashUtil.sha256Base64(refreshToken, refreshPepper);
+        if (!incomingHash.equals(storedHash)) {
+            throw new BaseException(ExceptionEnum.INVALID_REFRESH_TOKEN);
+        }
+
+        LocalDateTime expiresAt = user.getRefreshTokenExpiresAt();
+        if (expiresAt != null && expiresAt.isBefore(LocalDateTime.now())) {
             throw new BaseException(ExceptionEnum.INVALID_REFRESH_TOKEN);
         }
 

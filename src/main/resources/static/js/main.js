@@ -11,12 +11,16 @@ function bindLogoutButton() {
     const logoutBtn = document.querySelector("header button");
     if (!logoutBtn) return;
 
-    logoutBtn.addEventListener("click", () => {
+    logoutBtn.addEventListener("click", async () => {
+        await fetch("/api/v1/auth/logout", {
+            method: "POST",
+            credentials: "include"
+        });
+
         localStorage.removeItem("accessToken");
         window.location.href = "/login";
     });
 }
-
 async function uploadFiles(files, folderName) {
     const token = getAccessToken();
     if (!token) {

@@ -47,6 +47,12 @@ public class User extends Timestamped {
     @OneToMany(mappedBy = "user", orphanRemoval = true, fetch = FetchType.LAZY)
     private List<Document> documents = new ArrayList<>();
 
+    @Column(name = "refresh_token_hash", length = 128)
+    private String refreshTokenHash;
+
+    @Column(name = "refresh_token_expires_at")
+    private LocalDateTime refreshTokenExpiresAt;
+
     public User(
             @NotBlank @Email String email,
             @NotBlank String nickName,
@@ -72,5 +78,15 @@ public class User extends Timestamped {
     // 회원 탈퇴
     public void updateDeletedAt() {
         this.deletedAt = LocalDateTime.now();
+    }
+
+    public void updateRefreshToken(String hash, LocalDateTime expiresAt) {
+        this.refreshTokenHash = hash;
+        this.refreshTokenExpiresAt = expiresAt;
+    }
+
+    public void clearRefreshToken() {
+        this.refreshTokenHash = null;
+        this.refreshTokenExpiresAt = null;
     }
 }

@@ -20,15 +20,13 @@ import org.springframework.web.bind.annotation.*;
 public class AuthController {
     private final AuthService authService;
 
-    // 일반 로그인
     @Operation(summary = "로그인", description = "일반 사용자의 로그인을 진행합니다.")
     @PostMapping("/sign-in")
     public ResponseEntity<String> login(@Valid @RequestBody LoginRequest loginRequest, HttpServletResponse response) {
-        // 로그인 후 토큰 발급
         String accessToken = authService.login(loginRequest);
         String refreshToken = authService.generateRefreshToken(loginRequest.getEmail());
 
-        // 액세스 토큰 redis 저장
+        // 리프레시 토큰 해시를 RDS(User)에 저장
         authService.saveRefreshToken(loginRequest.getEmail(), refreshToken);
 
         // 리프레시 토큰을 HTTP-Only 쿠키로 설정
@@ -37,11 +35,12 @@ public class AuthController {
         return ResponseEntity.status(HttpStatus.CREATED).body(accessToken);
     }
 
-    // 리프레시 토큰으로 액세스 토큰 재발급
     @Operation(summary = "토큰 재발급", description = "리프레시 토큰을 사용하여 새로운 액세스 토큰을 발급합니다.")
     @PostMapping("/refresh-token")
     public ResponseEntity<String> refreshToken(
-            @CookieValue(value = "refreshToken", required = false) String refreshToken, HttpServletResponse response) {
+            @CookieValue(value = "refreshToken", required = false) String refreshToken,
+            HttpServletResponse response
+    ) {
         String newAccessToken = authService.refreshAccessToken(refreshToken, response);
         return ResponseEntity.ok(newAccessToken);
     }

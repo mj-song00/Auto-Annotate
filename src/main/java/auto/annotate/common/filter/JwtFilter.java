@@ -46,7 +46,9 @@ public class JwtFilter implements Filter {
                 url.startsWith("/v3/api-docs") ||
                 url.startsWith("/api/v1/users/auth/sign-in") ||
                 url.startsWith("/api/v1/users/sign-up") ||
-                url.startsWith("/api/v1/users/auth/refresh-token") // refreshToken API
+                url.startsWith("/api/v1/users/auth/refresh-token") || // refreshToken API
+                url.startsWith("/api/v1/users/auth/logout")
+
         ) {
             chain.doFilter(request, response);
             return;
