@@ -1,7 +1,7 @@
 # 🔵  Recoding Highlight 
 > PDF 문서 자동 분석 및 Excel 리포트 생성 서비스
 > 
-> 주소 : [recoding](https://recordhighlight.com/)
+> 주소 : [서비스 주소](https://recordhighlight.com/)
 
 ## 1. 프로젝트 소개
 ### 🔎 개요
