@@ -133,9 +133,11 @@ public class GlobalExceptionHandler {
         String ip = "(unknown)";
         String ua = "(unknown)";
 
+        String requestUri = "";
         if (request != null) {
             String qs = request.getQueryString();
-            url = request.getRequestURI() + (qs != null ? "?" + qs : "");
+            requestUri = request.getRequestURI();
+            url = requestUri + (qs != null ? "?" + qs : "");
             method = request.getMethod();
             ua = String.valueOf(request.getHeader("User-Agent"));
 
@@ -147,16 +149,22 @@ public class GlobalExceptionHandler {
             }
         }
 
-        // 정적 리소스/자동 요청 노이즈는 알림 제외
+        // 404 성격(정적 리소스 없음 / 스캐너 탐색) -> 디코 알림 제외
         if (ex instanceof org.springframework.web.servlet.resource.NoResourceFoundException) {
-            String p = request != null ? request.getRequestURI() : "";
-            if ("/favicon.ico".equals(p) || p.startsWith("/.well-known/") || "/robots.txt".equals(p)) {
-                return ResponseEntity.status(ExceptionEnum.INTERNAL_SERVER_ERROR.getStatus())
-                        .body(ApiResponse.errorWithOutData(
-                                ExceptionEnum.INTERNAL_SERVER_ERROR,
-                                ExceptionEnum.INTERNAL_SERVER_ERROR.getStatus()
-                        ));
-            }
+            return ResponseEntity.status(ExceptionEnum.INTERNAL_SERVER_ERROR.getStatus())
+                    .body(ApiResponse.errorWithOutData(
+                            ExceptionEnum.INTERNAL_SERVER_ERROR,
+                            ExceptionEnum.INTERNAL_SERVER_ERROR.getStatus()
+                    ));
+        }
+
+        // 405 성격(지원하지 않는 HTTP 메서드: PROPFIND 등) -> 디코 알림 제외
+        if (ex instanceof org.springframework.web.HttpRequestMethodNotSupportedException) {
+            return ResponseEntity.status(ExceptionEnum.INTERNAL_SERVER_ERROR.getStatus())
+                    .body(ApiResponse.errorWithOutData(
+                            ExceptionEnum.INTERNAL_SERVER_ERROR,
+                            ExceptionEnum.INTERNAL_SERVER_ERROR.getStatus()
+                    ));
         }
 
         // root cause 추출 (진짜 원인)
@@ -174,16 +182,16 @@ public class GlobalExceptionHandler {
                 : "UNEXPECTED";
 
         String message = """
-            서버 에러 알림(%s)
-            url: %s
-            method: %s
-            ip: %s
-            ua: %s
-            type: %s
-            msg: %s
-            rootType: %s
-            rootMsg: %s
-            """.formatted(
+        서버 에러 알림(%s)
+        url: %s
+        method: %s
+        ip: %s
+        ua: %s
+        type: %s
+        msg: %s
+        rootType: %s
+        rootMsg: %s
+        """.formatted(
                 tag,
                 url,
                 method,
