@@ -142,8 +142,8 @@ public class DocumentServiceImpl implements DocumentService {
                     continue;
                 }
 
-                // 3) S3 key 생성 (prefix 없음)
-                key = bundleKey + "/" + storedFilename;
+                // 3) S3 key 생성 (prefix 추가)
+                key = "users/" + bundleKey + "/" + storedFilename;
 
                 // 4) S3 업로드 (Multipart Upload)
                 try {
