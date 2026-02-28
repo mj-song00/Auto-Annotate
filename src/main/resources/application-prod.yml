@@ -1,0 +1,58 @@
+server:
+  port : ${SERVER_PORT}
+
+spring:
+  servlet:
+    multipart:
+      max-file-size: ${MAX_FILE}
+      max-request-size: ${MAX_REQUEST}
+
+  datasource:
+    url: ${DATABASE_URL}
+    username: ${POSTGRES_NAME}
+    password: ${POSTGRES_PASSWORD}
+    driver-class-name: org.postgresql.Driver
+
+  jpa:
+    hibernate:
+      ddl-auto: update
+    properties:
+      hibernate:
+        show_sql: false
+        format_sql: true
+        dialect: org.hibernate.dialect.PostgreSQLDialect
+    open-in-view: false
+
+springdoc:
+  api-docs:
+    enabled: false
+  swagger-ui:
+    enabled: false
+
+logging:
+  level:
+    auto.annotate: INFO
+
+pdf:
+  file:
+    upload-dir: ${UPLOAD_FOLDER}
+
+jwt:
+  secret:
+    key: ${JWT_SECRET_KEY}
+  refresh-expiration: ${JWT_REFRESH_EXPIRATION_TIME}
+  expiration: ${JWT_EXPIRATION_TIME}
+  refresh:
+    pepper: ${JWT_REFRESH_PEPPER}
+
+aws:
+  credentials:
+    access-key: ${AWS_ACCESS_KEY}
+    secret-key: ${AWS_SECRET_KEY}
+  s3:
+    bucket: ${AWS_BUCKET}
+    region: ${AWS_REGION}
+
+discord:
+  url: ${DISCORD_URL}
+
