@@ -41,7 +41,10 @@
 - Refresh Token은 HttpOnly Cookie로 관리
 - 로그아웃 시 토큰 무효화 처리
 
-## 🚨 3. 트러블 슈팅 
+## 3. 대표 API 
+<img width="1396" height="247" alt="스크린샷 2026-03-02 오후 3 48 49" src="https://github.com/user-attachments/assets/db7048c0-c815-4cba-b112-cf24f7fb6668" />
+
+## 🚨 4. 트러블 슈팅 
 ### 1. 500 에러도 아닌데 PDF가 렌더링되지 않던 문제
 
 #### 문제상황
@@ -74,8 +77,9 @@ calculateTextPositions() 호출
 - PDF 미표시 현상 제거
 - 생성 단계가 로그 기준 정상 종료됨 확인
 
-#### 결과([[Spring Boot + PDFBox] 500도 아닌데 PDF가 안 뜬다?](https://velog.io/@viento/트러블-슈팅-정리)) 
+#### 결과
 **약 9.8초 → 5 ~ 6초로 단축 (약 4 ~ 5초 감소, 40~50% 개선)**<br>
+([[Spring Boot + PDFBox] 결과 더 보기](https://velog.io/@viento/트러블-슈팅-정리)) 
  
 ### 2. JWT 인증 구조 단순화 (Redis 미도입 결정)
 #### 문제
@@ -91,14 +95,18 @@ calculateTextPositions() 호출
 - 추가 인프라 비용: Redis 0원
 - 토큰 폐기 처리: 로그아웃 시 DB 1건 무효화로 일관되게 처리
 
-## 4. 시스템 아키텍처
+## 5. 시스템 아키텍처
 <img width="1029" height="541" alt="스크린샷 2026-03-02 오후 3 09 08" src="https://github.com/user-attachments/assets/5790c05a-9422-47c8-a522-13b1fc54405f" />
-
-## 5. 향후 개선 계획
+- Elastic Beanstalk Load Balanced 환경 사용
+- Auto Scaling: min=1, max=1 (비용 고려)
+- ALB에서 HTTPS 종료
+  
+## 6. 향후 개선 계획
 - 멀티 인스턴스 환경에서 동시성 제어 개선
 - Redis 도입 검토
+- S3 비동기 처리 및 PDF 생성 비동기화 검토
 
-## 6. 기술 스택 
+## 7. 기술 스택 
 Backend
 
 ![](https://img.shields.io/badge/Spring-6DB33F?style=for-the-badge&logo=spring&logoColor=white)
